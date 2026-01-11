@@ -81,6 +81,59 @@ const Button = ({ onClick, children, variant = "primary", className = "", icon: 
 // Gemini API 暫時停用，保留函式結構但移除呼叫
 // const callGeminiAPI = async (apiKey, prompt, content) => { ... }
 
+// --- Google Sheets API Service ---
+
+const GOOGLE_SHEETS_API_URL = import.meta.env.VITE_GOOGLE_SHEETS_API_URL || '';
+
+// 從 Google Sheets 讀取所有任務
+const fetchTasksFromSheets = async () => {
+  if (!GOOGLE_SHEETS_API_URL) {
+    console.warn('Google Sheets API URL 未設定，將使用本地儲存');
+    return null;
+  }
+  
+  try {
+    const response = await fetch(`${GOOGLE_SHEETS_API_URL}?t=${Date.now()}`);
+    const data = await response.json();
+    
+    if (data.error) {
+      console.error('Google Sheets 錯誤:', data.error);
+      return null;
+    }
+    
+    return Array.isArray(data) ? data.filter(task => task.status !== 'archived') : null;
+  } catch (error) {
+    console.error('讀取 Google Sheets 失敗:', error);
+    return null;
+  }
+};
+
+// 同步任務到 Google Sheets
+const syncTaskToSheets = async (action, task) => {
+  if (!GOOGLE_SHEETS_API_URL) {
+    console.warn('Google Sheets API URL 未設定，跳過同步');
+    return;
+  }
+  
+  try {
+    const response = await fetch(GOOGLE_SHEETS_API_URL, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ action, task }),
+    });
+    
+    const result = await response.json();
+    if (result.error) {
+      console.error('同步到 Google Sheets 失敗:', result.error);
+    }
+  } catch (error) {
+    console.error('同步到 Google Sheets 失敗:', error);
+    // 失敗時不影響使用者體驗，只記錄錯誤
+  }
+};
+
 const callOpenAIAPI = async (apiKey, systemPrompt, userContent) => {
   const userMessage = `請根據以下「Gemini 研究報告」內容進行撰寫：\n\n「\n${userContent}\n」`;
   
@@ -164,16 +217,8 @@ const triggerConfetti = () => {
 // --- 主應用程式 ---
 
 export default function App() {
-  const [tasks, setTasks] = useState(() => {
-    try {
-      const saved = localStorage.getItem('content-farm-tasks');
-      return saved ? JSON.parse(saved) : [
-        { id: 1, title: '範例：SEC 起訴 Coinbase', status: 'inbox', url: 'https://example.com', content: '這裡是一段範例的原始文字內容...', geminiReport: '', summary: '', substackLink: '', created_at: new Date().toISOString() },
-      ];
-    } catch (e) {
-      return [];
-    }
-  });
+  const [tasks, setTasks] = useState([]);
+  const [isLoadingTasks, setIsLoadingTasks] = useState(true);
 
   const [apiKeys, setApiKeys] = useState(() => {
     try {
@@ -237,8 +282,46 @@ export default function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []); // 只在首次載入時執行
 
+  // 載入任務：優先從 Google Sheets，如果失敗則使用本地儲存
   useEffect(() => {
-    localStorage.setItem('content-farm-tasks', JSON.stringify(tasks));
+    const loadTasks = async () => {
+      setIsLoadingTasks(true);
+      
+      // 嘗試從 Google Sheets 讀取
+      const sheetsTasks = await fetchTasksFromSheets();
+      
+      if (sheetsTasks && sheetsTasks.length > 0) {
+        setTasks(sheetsTasks);
+        localStorage.setItem('content-farm-tasks', JSON.stringify(sheetsTasks));
+      } else {
+        // 如果 Google Sheets 不可用，使用本地儲存
+        try {
+          const saved = localStorage.getItem('content-farm-tasks');
+          if (saved) {
+            const parsed = JSON.parse(saved);
+            setTasks(parsed);
+          } else {
+            // 預設範例任務（僅在完全沒有資料時）
+            setTasks([
+              { id: 1, title: '範例：SEC 起訴 Coinbase', status: 'inbox', url: 'https://example.com', content: '這裡是一段範例的原始文字內容...', geminiReport: '', summary: '', substackLink: '', created_at: new Date().toISOString() },
+            ]);
+          }
+        } catch (e) {
+          setTasks([]);
+        }
+      }
+      
+      setIsLoadingTasks(false);
+    };
+    
+    loadTasks();
+  }, []);
+
+  // 同步任務到本地儲存和 Google Sheets
+  useEffect(() => {
+    if (tasks.length > 0) {
+      localStorage.setItem('content-farm-tasks', JSON.stringify(tasks));
+    }
   }, [tasks]);
 
   useEffect(() => {
@@ -264,7 +347,7 @@ export default function App() {
     setFavicon();
   }, []);
 
-  const addTask = (rawContent) => {
+  const addTask = async (rawContent) => {
     if (!rawContent.trim()) return;
 
     const firstLine = rawContent.trim().split('\n')[0];
@@ -284,12 +367,28 @@ export default function App() {
       imageStatus: false,
       substackLink: ''
     };
+    
+    // 先更新本地狀態
     setTasks([newTask, ...tasks]);
     setIsModalOpen(false);
+    
+    // 同步到 Google Sheets
+    await syncTaskToSheets('create', newTask);
   };
 
-  const updateTask = (id, updates) => {
-    setTasks(prevTasks => prevTasks.map(t => t.id === id ? { ...t, ...updates } : t));
+  const updateTask = async (id, updates) => {
+    setTasks(prevTasks => {
+      const updated = prevTasks.map(t => {
+        if (t.id === id) {
+          const updatedTask = { ...t, ...updates };
+          // 同步到 Google Sheets
+          syncTaskToSheets('update', updatedTask);
+          return updatedTask;
+        }
+        return t;
+      });
+      return updated;
+    });
   };
 
   const handleDeleteRequest = (id) => {
@@ -308,12 +407,19 @@ export default function App() {
     });
   };
 
-  const confirmAction = () => {
+  const confirmAction = async () => {
     if (confirmDialog.type === 'delete') {
       setTasks(prev => prev.filter(t => t.id !== confirmDialog.id));
       if (activeTaskId === confirmDialog.id) setActiveTaskId(null);
     } else if (confirmDialog.type === 'archive') {
-      setTasks([]); 
+      // 標記所有任務為 archived 並同步到 Google Sheets
+      const now = new Date().toISOString();
+      setTasks(prevTasks => {
+        const archived = prevTasks.map(t => ({ ...t, status: 'archived', completed_at: now }));
+        // 同步到 Google Sheets
+        syncTaskToSheets('archive', { tasks: archived });
+        return [];
+      });
       setActiveTaskId(null);
     }
     setConfirmDialog({ isOpen: false, type: '', id: null });
