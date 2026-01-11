@@ -3,9 +3,18 @@ import { Plus, Copy, Check, ArrowRight, FileText, Image as ImageIcon, Share, Tra
 
 // --- 配置與 Prompt 資料庫 ---
 const PROMPTS = {
-  gemini: `請你替我研究這個主題並以繁體中文製作報告，內容包含目前的發展進度是什麼、為什麼會發生這件事（為什麼會做這個決定），以及這件事會對未來產生什麼影響？還有，我也想知道網路上有哪些人對這起事件有哪些正面和反面的論點？他們說了什麼、為什麼這樣說？
+  // 修改：強化為 Deep Research Agent 角色，並要求深度挖掘
+  gemini: `你是一個 Deep Research Agent (深度研究代理)。請針對以下提供的原始素材與主題進行深度網路搜尋與研究，並以繁體中文製作一份詳盡的深度研究報告。
 
-**重要規則：請直接開始輸出報告內容（Markdown 格式），嚴格禁止任何開場白（例如：「好的，我將為您...」）或結語。**`,
+研究方向與內容要求：
+1. **現況與脈絡**：目前的發展進度是什麼？為什麼會發生這件事（背後的決策邏輯或根本原因）？
+2. **未來影響**：這件事會對未來產生什麼具體影響（市場、技術、法規等層面）？
+3. **觀點分析**：網路上有哪些關鍵人物或機構對這起事件發表了評論？請詳細列出正面和反面的論點，說明他們說了什麼、為什麼這樣說？
+
+**重要規則：**
+1. **務必使用搜尋工具**：驗證事實並補充最新資訊。
+2. **直接輸出**：請直接開始輸出報告內容（Markdown 格式），**嚴格禁止任何開場白**（例如：「好的，我將為您...」、「根據您的要求...」）或結語。
+3. **繁體中文**：所有內容請使用流暢的繁體中文撰寫。`,
   
   chatgpt_role: `# Role
 你是一位極簡主義的新聞通訊社編輯（如 Reuters 或 AP 風格）。你的任務是將報告以更像是台灣人寫的內容，濃縮為「高密度的純文字摘要」。
@@ -60,10 +69,12 @@ const Badge = ({ children, color = "blue" }) => {
   );
 };
 
+// 修改 Button 組件以支援暫時性文字變化 (Copied feedback)
 const Button = ({ onClick, children, variant = "primary", className = "", icon: Icon, disabled = false, loading = false }) => {
   const [feedback, setFeedback] = useState(null);
   
   const handleClick = async (e) => {
+    // 攔截 onClick 來處理複製回饋，如果 onClick 回傳 "copied"，則顯示回饋
     const result = await onClick(e);
     if (result === 'copied') {
       setFeedback('已複製！');
@@ -91,58 +102,8 @@ const Button = ({ onClick, children, variant = "primary", className = "", icon: 
 
 // --- API Service ---
 
-const callGeminiAPI = async (apiKey, prompt, content) => {
-  const fullPrompt = `${prompt}\n\n**原始素材：**\n${content}`;
-  
-  const modelsToTry = [
-    'gemini-3.0-pro', 
-    'gemini-2.0-flash-exp', 
-    'gemini-1.5-pro' 
-  ];
-
-  let lastError = null;
-
-  for (const model of modelsToTry) {
-    try {
-      console.log(`Trying Gemini model: ${model}...`);
-      const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          contents: [{ parts: [{ text: fullPrompt }] }],
-          tools: [{ google_search: {} }] 
-        })
-      });
-      
-      const data = await response.json();
-      
-      if (data.error) {
-        if (data.error.code === 404 || data.error.message.includes('not found') || data.error.message.includes('supported')) {
-          console.warn(`Model ${model} failed, trying next...`);
-          lastError = new Error(`Model ${model} not available: ${data.error.message}`);
-          continue;
-        }
-        throw new Error(data.error.message);
-      }
-      
-      const parts = data.candidates?.[0]?.content?.parts;
-      if (!parts) throw new Error("無法從 Gemini 回應中解析內容。");
-      
-      let text = parts.filter(p => p.text).map(p => p.text).join('\n');
-      text = text.replace(/^(好的|沒問題|当然|當然|Sure|Here is).*?[\n\r]+/i, "").trim();
-
-      return text;
-      
-    } catch (error) {
-      lastError = error;
-      if (error.message.includes('API key') || error.message.includes('permission')) {
-        throw error;
-      }
-    }
-  }
-
-  throw lastError || new Error("所有 Gemini 模型嘗試皆失敗，請確認 API Key 或網絡狀態。");
-};
+// Gemini API 暫時停用，保留函式結構但移除呼叫
+// const callGeminiAPI = async (apiKey, prompt, content) => { ... }
 
 const callOpenAIAPI = async (apiKey, systemPrompt, userContent) => {
   const userMessage = `請根據以下「Gemini 研究報告」內容進行撰寫：\n\n「\n${userContent}\n」`;
@@ -190,9 +151,10 @@ export default function App() {
   const [apiKeys, setApiKeys] = useState(() => {
     try {
       const saved = localStorage.getItem('content-farm-api-keys');
-      return saved ? JSON.parse(saved) : { gemini: '', openai: '' };
+      // 移除 gemini key 預設值
+      return saved ? JSON.parse(saved) : { openai: '' };
     } catch (e) {
-      return { gemini: '', openai: '' };
+      return { openai: '' };
     }
   });
 
@@ -201,7 +163,6 @@ export default function App() {
   const [activeTaskId, setActiveTaskId] = useState(null);
   const [confirmDialog, setConfirmDialog] = useState({ isOpen: false, type: '', id: null });
   
-  const [isGeneratingGemini, setIsGeneratingGemini] = useState(false);
   const [isGeneratingGPT, setIsGeneratingGPT] = useState(false);
 
   const substackPreviewRef = useRef(null);
@@ -297,21 +258,10 @@ export default function App() {
     }
   };
 
-  const handleGeminiGenerate = async () => {
-    if (!apiKeys.gemini) {
-      alert("請先點擊右上角「設定」，填入 Google Gemini API Key。");
-      return;
-    }
-    setIsGeneratingGemini(true);
-    try {
-      const result = await callGeminiAPI(apiKeys.gemini, PROMPTS.gemini, activeTask.content);
-      updateTask(activeTask.id, { geminiReport: result });
-    } catch (error) {
-      alert(`發生錯誤：${error.message}\n\n已嘗試多個模型版本，請檢查 API Key 權限。`);
-    } finally {
-      setIsGeneratingGemini(false);
-    }
-  };
+  // Gemini 生成功能已暫時移除
+  /*
+  const handleGeminiGenerate = async () => { ... }
+  */
 
   const handleChatGPTGenerate = async () => {
     if (!apiKeys.openai) {
@@ -341,7 +291,6 @@ export default function App() {
     return { title, p1, p2 };
   };
 
-  // Helper function to render text with markdown bolding as HTML bold
   const renderMarkdownText = (text) => {
     if (!text) return null;
     const parts = text.split(/(\*\*.*?\*\*)/g); // Split by bold markers
@@ -387,7 +336,11 @@ export default function App() {
     const copyGeminiPrompt = (prompt, content) => {
       let fullText = prompt;
       if (content) fullText += `\n\n\n${content}`;
-      return secureCopy(fullText);
+      const result = secureCopy(fullText);
+      if (result === 'copied') {
+        window.open('https://gemini.google.com/app', '_blank');
+      }
+      return result;
     };
 
     const copyChatGPTPrompt = (rolePrompt, report) => {
@@ -395,11 +348,20 @@ export default function App() {
       if (report) {
         fullText += `\n\n請根據以下「Gemini 研究報告」內容進行撰寫：\n\n「\n${report}\n」`;
       }
-      return secureCopy(fullText);
+      const result = secureCopy(fullText);
+      // 修改：ChatGPT 手動複製不開啟網頁，因為主要依賴 API
+      // if (result === 'copied') {
+      //   window.open('https://chatgpt.com/', '_blank');
+      // }
+      return result;
     };
 
-    const copyToClipboard = (text) => {
-      return secureCopy(text);
+    const copyToClipboard = (text, openUrl = null) => {
+      const result = secureCopy(text);
+      if (result === 'copied' && openUrl) {
+        window.open(openUrl, '_blank');
+      }
+      return result;
     };
 
     const summaryParts = parseSummary(activeTask.summary);
@@ -431,7 +393,7 @@ export default function App() {
                 <h3 className="text-base sm:text-lg font-bold text-gray-800">Gemini 深度研究</h3>
               </div>
               <Card className={`p-4 bg-white transition-all ${activeTask.status === 'inbox' ? 'ring-2 ring-blue-500 shadow-lg' : ''}`}>
-                <p className="text-sm text-gray-500 mb-2">選項 A：手動複製指令與素材（無需 API Key）</p>
+                <p className="text-sm text-gray-500 mb-2">選項 A：手動複製指令與素材（前往 Gemini 網頁）</p>
                 <div className="mb-3 p-3 border-l-4 border-blue-200 bg-slate-50 text-xs text-gray-600">
                   <div className="font-bold mb-1 text-slate-500">素材預覽：</div>
                   <div className="line-clamp-3 italic text-slate-700">
@@ -439,38 +401,26 @@ export default function App() {
                   </div>
                 </div>
 
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-4">
+                <div className="grid grid-cols-1 gap-3 mb-4">
                   <Button onClick={() => copyGeminiPrompt(PROMPTS.gemini, activeTask.content)} icon={Copy} variant="secondary" className="w-full">
-                    手動複製指令到 Gemini
+                    複製指令並開啟 Gemini
                   </Button>
                   
-                  {/* 已暫時隱藏自動按鈕 */}
-                  {/* <Button 
-                    onClick={handleGeminiGenerate} 
-                    icon={Sparkles} 
-                    variant="magic" 
-                    className="w-full"
-                    loading={isGeneratingGemini}
-                  >
-                    AI 自動產生報告 (Deep Research)
-                  </Button> */}
-                  <Button disabled variant="ghost" className="w-full bg-gray-100 text-gray-400 border border-gray-200 cursor-not-allowed">
-                    AI 自動產生 (暫時維護中)
-                  </Button>
+                  {/* AI 自動產生按鈕已隱藏 */}
                 </div>
 
                 {activeTask.geminiReport && (
                   <div className="mt-4 p-3 bg-green-50 border border-green-200 rounded-lg animate-in fade-in duration-300">
                     <div className="flex items-center justify-between mb-2">
                       <div className="flex items-center text-sm font-bold text-green-800">
-                        <Check size={16} className="mr-1" /> 報告已產生
+                        <Check size={16} className="mr-1" /> 報告已填入
                       </div>
                       <Button 
                         variant="ghost" 
                         onClick={() => copyToClipboard(activeTask.geminiReport)}
                         className="h-8 text-xs bg-white border border-green-200 text-green-700 hover:bg-green-100"
                       >
-                        <Copy size={12} className="mr-1"/> 複製報告內容
+                        <Copy size={12} className="mr-1"/> 複製內容
                       </Button>
                     </div>
                     <div className="text-xs text-gray-600 bg-white p-2 rounded border border-green-100 h-24 overflow-y-auto">
@@ -499,11 +449,11 @@ export default function App() {
                 <div className="mb-6 bg-slate-50 p-4 rounded-lg border border-slate-200">
                   <div className="flex items-center mb-2 text-purple-800 font-bold text-sm">
                     <ClipboardPaste size={16} className="mr-2" />
-                    第一步：Gemini 研究報告 (已自動帶入)
+                    第一步：Gemini 研究報告 (手動貼上)
                   </div>
                   <textarea 
                     className="w-full border rounded p-3 text-base sm:text-sm h-32 focus:ring-2 focus:ring-purple-500 outline-none" 
-                    placeholder="如果第一步使用了 AI 自動產生，這裡會自動填入。如果是手動，請在此貼上 Gemini 的報告..."
+                    placeholder="請在此貼上您從 Gemini 獲得的研究報告..."
                     value={activeTask.geminiReport || ''}
                     onChange={(e) => updateTask(activeTask.id, { geminiReport: e.target.value })}
                   />
@@ -515,7 +465,7 @@ export default function App() {
                        className="w-full border-purple-200 text-purple-700 hover:bg-purple-50"
                        disabled={!activeTask.geminiReport}
                      >
-                      手動複製指令 (含報告)
+                      手動複製指令
                     </Button>
                     <Button 
                       onClick={handleChatGPTGenerate} 
@@ -567,13 +517,13 @@ export default function App() {
                   </div>
                   <p className="text-sm text-gray-500 font-bold">1. 準備製圖素材 (Gemini 報告)：</p>
                   <Button 
-                    onClick={() => copyToClipboard(activeTask.geminiReport || '無報告內容')} 
+                    onClick={() => copyToClipboard(activeTask.geminiReport || '無報告內容', 'https://notebooklm.google.com/')} 
                     icon={Copy} 
                     variant="secondary" 
                     className="w-full border-green-200 text-green-700 hover:bg-green-50"
                     disabled={!activeTask.geminiReport}
                   >
-                    複製 Gemini 報告 (製圖素材)
+                    複製報告並開啟 NotebookLM
                   </Button>
                   
                   <p className="text-sm text-gray-500 font-bold pt-2">2. 設定 NotebookLM 與複製風格：</p>
@@ -646,7 +596,6 @@ export default function App() {
                     </Button>
                   </div>
                   
-                  {/* 使用 renderMarkdownText 處理預覽文字，移除星號並加粗 */}
                   <div 
                     ref={substackPreviewRef}
                     className="bg-white border border-gray-200 p-6 rounded-lg shadow-sm text-gray-800 leading-relaxed font-serif"
@@ -738,23 +687,6 @@ export default function App() {
             <div className="p-3 bg-blue-50 text-blue-800 rounded-lg text-sm mb-4">
               填入 API Key 後，系統將啟用「✨ AI 自動產生」功能。
               <br/>Key 僅儲存在您的瀏覽器中，不會上傳伺服器。
-            </div>
-
-            <div>
-              <label className="block text-sm font-bold text-gray-700 mb-1">Google Gemini API Key</label>
-              <div className="relative">
-                <Key className="absolute left-3 top-2.5 text-gray-400" size={16} />
-                <input 
-                  type="password"
-                  className="w-full border rounded pl-10 p-2 text-base sm:text-sm focus:ring-2 focus:ring-blue-500 outline-none"
-                  placeholder="AIzaSy..."
-                  value={apiKeys.gemini}
-                  onChange={(e) => setApiKeys({...apiKeys, gemini: e.target.value})}
-                />
-              </div>
-              <a href="https://aistudio.google.com/app/apikey" target="_blank" rel="noreferrer" className="text-xs text-blue-500 hover:underline mt-1 block text-right">
-                取得 Gemini API Key
-              </a>
             </div>
 
             <div>
