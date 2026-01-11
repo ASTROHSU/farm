@@ -5,9 +5,11 @@
 ## 功能特色
 
 - 📥 **點子庫管理**：快速收集和組織內容素材
-- 🤖 **AI 自動化**：整合 Gemini 和 ChatGPT API，自動產生研究報告和文案
+- 🤖 **AI 自動化**：整合 Gemini 3.0 Pro Deep Research 和 ChatGPT API，自動產生研究報告和文案
 - 🎨 **視覺化工作流**：追蹤從點子到發布的完整流程
 - 📊 **資訊圖表支援**：提供 NotebookLM 風格指南，協助製作專業圖表
+- 🖼️ **圖片上傳與預覽**：支援上傳資訊圖表，自動排版 Substack 草稿預覽
+- 📋 **一鍵複製功能**：快速複製完整草稿內容到 Substack
 - 💾 **本地儲存**：所有資料儲存在瀏覽器本地，保護隱私
 
 ## 技術 stack
@@ -69,12 +71,23 @@ npm run preview
 - 複製風格指令以確保視覺一致性
 
 ### 步驟 4：上架整合
+- 上傳 NotebookLM 產出的資訊圖表
+- 自動生成 Substack 草稿預覽（標題、段落、圖片排版）
+- 一鍵複製完整草稿內容到 Substack
 - 貼上 Substack 預覽連結
 - 完成發布流程
 
 ## 版本
 
-v4.1.0
+v4.2.0
+
+### v4.2 新功能
+
+- ✅ 改進 Gemini API：優先使用 Gemini 3.0 Pro，支援 Deep Research（Google Search Grounding）
+- ✅ 新增圖片上傳功能：可在步驟 4 上傳資訊圖表
+- ✅ Substack 草稿預覽：自動排版標題、段落和圖片，一鍵複製完整內容
+- ✅ 改進任務管理：新任務自動置頂，更清晰的進度指示
+- ✅ 優化 ChatGPT Prompt：自動包含 Gemini 報告上下文
 
 ## License
 
