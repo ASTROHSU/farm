@@ -178,8 +178,12 @@ export default function App() {
   const [apiKeys, setApiKeys] = useState(() => {
     try {
       const saved = localStorage.getItem('content-farm-api-keys');
-      // 移除 gemini key 預設值
-      return saved ? JSON.parse(saved) : { openai: '' };
+      if (saved) {
+        return JSON.parse(saved);
+      }
+      // 如果 localStorage 中沒有，嘗試從環境變數讀取（不會暴露在 GitHub）
+      const envKey = import.meta.env.VITE_OPENAI_API_KEY;
+      return { openai: envKey || '' };
     } catch (e) {
       return { openai: '' };
     }
@@ -193,8 +197,40 @@ export default function App() {
   const [isGeneratingGPT, setIsGeneratingGPT] = useState(false);
 
   const substackPreviewRef = useRef(null);
+  const [modalHeight, setModalHeight] = useState('90vh');
 
   const activeTask = tasks.find(t => t.id === activeTaskId);
+
+  // 動態計算視窗高度以支援所有瀏覽器（包括 Brave）
+  useEffect(() => {
+    const updateHeight = () => {
+      const isMobile = window.innerWidth <= 768;
+      if (isMobile) {
+        // 手機版：使用實際視窗高度，確保不會破版
+        setModalHeight(`${window.innerHeight}px`);
+      } else {
+        setModalHeight('90vh');
+      }
+    };
+
+    updateHeight();
+    window.addEventListener('resize', updateHeight);
+    window.addEventListener('orientationchange', updateHeight);
+    
+    return () => {
+      window.removeEventListener('resize', updateHeight);
+      window.removeEventListener('orientationchange', updateHeight);
+    };
+  }, []);
+
+  // 初始化時，如果環境變數有 API Key 且 localStorage 中沒有，則自動填入
+  useEffect(() => {
+    const envKey = import.meta.env.VITE_OPENAI_API_KEY;
+    if (envKey && !apiKeys.openai) {
+      setApiKeys(prev => ({ ...prev, openai: envKey }));
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []); // 只在首次載入時執行
 
   useEffect(() => {
     localStorage.setItem('content-farm-tasks', JSON.stringify(tasks));
@@ -381,7 +417,32 @@ export default function App() {
       if (content) fullText += `\n\n\n${content}`;
       const result = secureCopy(fullText);
       if (result === 'copied') {
-        window.open('https://gemini.google.com/app', '_blank');
+        // 檢測是否為移動設備（iOS/Android）
+        const isMobile = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
+        const isIOS = /iPhone|iPad|iPod/i.test(navigator.userAgent);
+        const isSafari = /Safari/i.test(navigator.userAgent) && !/Chrome/i.test(navigator.userAgent);
+        
+        if (isMobile && isIOS && isSafari) {
+          // iOS Safari: 使用 Universal Link，如果安裝了 App 會自動打開，否則打開網頁版
+          // 使用 window.location 而不是 window.open，這樣 Universal Link 才能正常工作
+          window.location.href = 'https://gemini.google.com/app';
+        } else if (isMobile) {
+          // 其他移動設備：先嘗試打開 App，如果失敗則打開網頁
+          // 使用隱藏的 iframe 嘗試打開 App（不會影響當前頁面）
+          const iframe = document.createElement('iframe');
+          iframe.style.display = 'none';
+          iframe.src = 'https://gemini.google.com/app';
+          document.body.appendChild(iframe);
+          
+          // 1.5 秒後如果還在當前頁面，則打開網頁版
+          setTimeout(() => {
+            document.body.removeChild(iframe);
+            window.open('https://gemini.google.com/app', '_blank');
+          }, 1500);
+        } else {
+          // 桌面版：直接打開網頁
+          window.open('https://gemini.google.com/app', '_blank');
+        }
       }
       return result;
     };
@@ -406,8 +467,14 @@ export default function App() {
 
     return (
       <div className="fixed inset-0 bg-black/50 flex items-end sm:items-center justify-center z-50 sm:p-4 backdrop-blur-sm">
-        {/* RWD Optimization: h-[100dvh] for mobile, rounded-none for mobile */}
-        <div className="bg-[#F9F9F7] w-full max-w-4xl h-[100dvh] sm:h-[90vh] rounded-none sm:rounded-xl shadow-2xl overflow-hidden flex flex-col animate-in slide-in-from-bottom duration-300 overscroll-none">
+        {/* RWD Optimization: 使用動態計算的高度以支援所有瀏覽器（包括 Brave） */}
+        <div 
+          className="bg-[#F9F9F7] w-full max-w-4xl rounded-none sm:rounded-xl shadow-2xl overflow-hidden flex flex-col animate-in slide-in-from-bottom duration-300 overscroll-none"
+          style={{
+            height: modalHeight,
+            maxHeight: modalHeight
+          }}
+        >
           
           <div className="bg-[#1A365D] text-white p-4 flex justify-between items-center flex-shrink-0">
             <div className="flex-1 min-w-0 mr-4">
