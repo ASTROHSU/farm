@@ -82,22 +82,74 @@ const Button = ({ onClick, children, variant = "primary", className = "", icon: 
 const callGeminiAPI = async (apiKey, prompt, content) => {
   const fullPrompt = `${prompt}\n\n**原始素材：**\n${content}`;
   
-  try {
-    const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${apiKey}`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        contents: [{ parts: [{ text: fullPrompt }] }]
-      })
-    });
-    
-    const data = await response.json();
-    if (data.error) throw new Error(data.error.message);
-    return data.candidates[0].content.parts[0].text;
-  } catch (error) {
-    console.error("Gemini API Error:", error);
-    throw error;
+  // 嘗試使用 Gemini 2.5 Pro (支援 Deep Research)，如果失敗則嘗試其他版本
+  const models = ['gemini-2.5-pro', 'gemini-1.5-pro', 'gemini-pro'];
+  const apiVersions = ['v1beta', 'v1'];
+  
+  for (const apiVersion of apiVersions) {
+    for (const model of models) {
+      try {
+        const url = `https://generativelanguage.googleapis.com/${apiVersion}/models/${model}:generateContent?key=${apiKey}`;
+        const response = await fetch(url, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            contents: [{ parts: [{ text: fullPrompt }] }],
+            // Deep Research 參數：啟用更深入的研究和分析
+            generationConfig: {
+              temperature: 0.7,
+              topK: 40,
+              topP: 0.95,
+              maxOutputTokens: 8192,
+            },
+            // 啟用安全設定但允許更多內容
+            safetySettings: [
+              {
+                category: "HARM_CATEGORY_HARASSMENT",
+                threshold: "BLOCK_MEDIUM_AND_ABOVE"
+              },
+              {
+                category: "HARM_CATEGORY_HATE_SPEECH",
+                threshold: "BLOCK_MEDIUM_AND_ABOVE"
+              },
+              {
+                category: "HARM_CATEGORY_SEXUALLY_EXPLICIT",
+                threshold: "BLOCK_MEDIUM_AND_ABOVE"
+              },
+              {
+                category: "HARM_CATEGORY_DANGEROUS_CONTENT",
+                threshold: "BLOCK_MEDIUM_AND_ABOVE"
+              }
+            ]
+          })
+        });
+        
+        const data = await response.json();
+        if (data.error) {
+          // 如果是模型不存在錯誤，嘗試下一個模型
+          if (data.error.message && data.error.message.includes('not found')) {
+            continue;
+          }
+          throw new Error(data.error.message);
+        }
+        
+        if (data.candidates && data.candidates[0] && data.candidates[0].content) {
+          return data.candidates[0].content.parts[0].text;
+        }
+        throw new Error('未收到有效回應');
+      } catch (error) {
+        // 如果是最後一個模型和版本，拋出錯誤
+        if (model === models[models.length - 1] && apiVersion === apiVersions[apiVersions.length - 1]) {
+          console.error(`Gemini API Error (${apiVersion}/${model}):`, error);
+          throw new Error(`API 調用失敗：${error.message || '請檢查 API Key 和網路連線'}`);
+        }
+        // 否則繼續嘗試下一個模型
+        continue;
+      }
+    }
   }
+  
+  throw new Error('所有 Gemini 模型都無法使用，請檢查 API Key 是否有效');
 };
 
 const callOpenAIAPI = async (apiKey, systemPrompt, userContent) => {
