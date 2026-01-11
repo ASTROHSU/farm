@@ -110,6 +110,57 @@ const callOpenAIAPI = async (apiKey, systemPrompt, userContent) => {
   }
 };
 
+// --- Utility: Confetti Effect ---
+const triggerConfetti = () => {
+  const colors = ['#ff595e', '#ffca3a', '#8ac926', '#1982c4', '#6a4c93'];
+  const confettiCount = 150;
+  
+  for (let i = 0; i < confettiCount; i++) {
+    const el = document.createElement('div');
+    el.style.position = 'fixed';
+    el.style.left = '50%';
+    el.style.top = '50%';
+    el.style.width = '10px';
+    el.style.height = '10px';
+    el.style.backgroundColor = colors[Math.floor(Math.random() * colors.length)];
+    el.style.zIndex = '9999';
+    el.style.pointerEvents = 'none';
+    el.style.borderRadius = '2px';
+    
+    // Random physics
+    const angle = Math.random() * Math.PI * 2;
+    const velocity = 8 + Math.random() * 12;
+    const dx = Math.cos(angle) * velocity;
+    const dy = Math.sin(angle) * velocity;
+    
+    document.body.appendChild(el);
+
+    let x = 0;
+    let y = 0;
+    let currentDx = dx;
+    let currentDy = dy;
+    let rotation = Math.random() * 360;
+    
+    const animate = () => {
+      x += currentDx;
+      y += currentDy;
+      currentDy += 0.5; // Gravity
+      rotation += 10;
+      
+      el.style.transform = `translate(calc(-50% + ${x}px), calc(-50% + ${y}px)) rotate(${rotation}deg)`;
+      el.style.opacity = 1 - (Math.abs(y) / (window.innerHeight / 1.2));
+      
+      if (y < window.innerHeight && el.style.opacity > 0) {
+        requestAnimationFrame(animate);
+      } else {
+        el.remove();
+      }
+    };
+    
+    animate();
+  }
+};
+
 // --- 主應用程式 ---
 
 export default function App() {
@@ -245,11 +296,18 @@ export default function App() {
       try {
         document.execCommand('copy');
         
-        // 成功複製後，直接標記完成並關閉視窗
+        // 觸發彩帶特效
+        triggerConfetti();
+
+        // 標記完成並關閉視窗 (狀態改為 'published'，對應 '已處理')
         updateTask(activeTask.id, { status: 'published' });
-        setActiveTaskId(null);
         
-        return 'copied';
+        // 延遲一點點再關閉，讓使用者看到按鈕反應
+        setTimeout(() => {
+          setActiveTaskId(null);
+        }, 500);
+        
+        // 不需要 Alert
       } catch (err) {
         alert("複製失敗，請手動選取內容複製。");
       }
@@ -569,20 +627,11 @@ export default function App() {
                   </div>
                 </div>
 
-                <div className="mb-6">
+                <div className="mb-4">
                   <div className="flex justify-between items-end mb-2">
                     <label className="text-sm font-bold text-gray-700 flex items-center">
                       <LayoutTemplate size={16} className="mr-2"/> 草稿預覽 (自動排版)
                     </label>
-                    <Button 
-                      onClick={handleCopySubstackDraft} 
-                      icon={Copy} 
-                      variant="magic" 
-                      className="text-xs py-1 px-3 h-8"
-                      disabled={!activeTask.summary}
-                    >
-                      一鍵複製完整草稿
-                    </Button>
                   </div>
                   
                   <div 
@@ -626,27 +675,16 @@ export default function App() {
                 </div>
 
                 <div className="border-t border-orange-200 pt-4 mt-4">
-                  <p className="text-sm text-gray-600 mb-3">
-                    最後步驟：貼上 Substack 預覽連結完成任務
-                  </p>
-                  <input 
-                    type="text"
-                    className="w-full border rounded p-2 mb-4 text-base sm:text-sm focus:ring-2 focus:ring-orange-300 outline-none"
-                    placeholder="https://substack.com/..."
-                    value={activeTask.substackLink}
-                    onChange={(e) => updateTask(activeTask.id, { substackLink: e.target.value })}
-                  />
                    {activeTask.status === 'review' && (
-                    <div className="flex justify-end">
+                    <div className="flex justify-center">
                       <Button 
-                         onClick={() => {
-                           updateTask(activeTask.id, { status: 'published' });
-                           setActiveTaskId(null); 
-                         }} 
-                         icon={Check}
-                         disabled={!activeTask.substackLink}
+                         onClick={handleCopySubstackDraft} 
+                         icon={Sparkles} 
+                         variant="magic"
+                         className="w-full py-4 text-lg font-bold shadow-xl hover:shadow-2xl transform hover:-translate-y-1 transition-all"
+                         disabled={!activeTask.summary}
                       >
-                        提交完成
+                        ✨ 複製草稿並完成任務
                       </Button>
                     </div>
                   )}
@@ -676,23 +714,6 @@ export default function App() {
             <div className="p-3 bg-blue-50 text-blue-800 rounded-lg text-sm mb-4">
               填入 API Key 後，系統將啟用「✨ AI 自動產生」功能。
               <br/>Key 僅儲存在您的瀏覽器中，不會上傳伺服器。
-            </div>
-
-            <div>
-              <label className="block text-sm font-bold text-gray-700 mb-1">Google Gemini API Key</label>
-              <div className="relative">
-                <Key className="absolute left-3 top-2.5 text-gray-400" size={16} />
-                <input 
-                  type="password"
-                  className="w-full border rounded pl-10 p-2 text-base sm:text-sm focus:ring-2 focus:ring-blue-500 outline-none"
-                  placeholder="AIzaSy..."
-                  value={apiKeys.gemini}
-                  onChange={(e) => setApiKeys({...apiKeys, gemini: e.target.value})}
-                />
-              </div>
-              <a href="https://aistudio.google.com/app/apikey" target="_blank" rel="noreferrer" className="text-xs text-blue-500 hover:underline mt-1 block text-right">
-                取得 Gemini API Key
-              </a>
             </div>
 
             <div>
@@ -756,7 +777,7 @@ export default function App() {
     { id: 'processing', title: '🤖 研究撰寫', color: 'bg-blue-50' },
     { id: 'visuals', title: '🎨 製圖中', color: 'bg-purple-50' },
     { id: 'review', title: '🚀 準備發布', color: 'bg-orange-50' },
-    { id: 'published', title: '✅ 已發布', color: 'bg-green-50' },
+    { id: 'published', title: '✅ 已處理', color: 'bg-green-50' },
   ];
 
   return (
