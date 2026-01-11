@@ -3,7 +3,10 @@ import { Plus, Copy, Check, ArrowRight, FileText, Image as ImageIcon, Share, Tra
 
 // --- 配置與 Prompt 資料庫 ---
 const PROMPTS = {
-  gemini: `請你替我研究這個主題並以繁體中文製作報告，內容包含目前的發展進度是什麼、為什麼會發生這件事（為什麼會做這個決定），以及這件事會對未來產生什麼影響？還有，我也想知道網路上有哪些人對這起事件有哪些正面和反面的論點？他們說了什麼、為什麼這樣說？`,
+  // 修改：加入強制指令，禁止客套話
+  gemini: `請你替我研究這個主題並以繁體中文製作報告，內容包含目前的發展進度是什麼、為什麼會發生這件事（為什麼會做這個決定），以及這件事會對未來產生什麼影響？還有，我也想知道網路上有哪些人對這起事件有哪些正面和反面的論點？他們說了什麼、為什麼這樣說？
+
+**重要規則：請直接開始輸出報告內容（Markdown 格式），嚴格禁止任何開場白（例如：「好的，我將為您...」）或結語。**`,
   
   chatgpt_role: `# Role
 你是一位極簡主義的新聞通訊社編輯（如 Reuters 或 AP 風格）。你的任務是將報告以更像是台灣人寫的內容，濃縮為「高密度的純文字摘要」。
@@ -58,7 +61,19 @@ const Badge = ({ children, color = "blue" }) => {
   );
 };
 
+// 修改 Button 組件以支援暫時性文字變化 (Copied feedback)
 const Button = ({ onClick, children, variant = "primary", className = "", icon: Icon, disabled = false, loading = false }) => {
+  const [feedback, setFeedback] = useState(null);
+  
+  const handleClick = async (e) => {
+    // 攔截 onClick 來處理複製回饋，如果 onClick 回傳 "copied"，則顯示回饋
+    const result = await onClick(e);
+    if (result === 'copied') {
+      setFeedback('已複製！');
+      setTimeout(() => setFeedback(null), 2000);
+    }
+  };
+
   const baseStyle = "flex items-center justify-center px-4 py-2 rounded-md transition-all duration-200 font-medium text-sm active:scale-95 touch-manipulation disabled:opacity-50 disabled:cursor-not-allowed";
   const variants = {
     primary: "bg-[#1A365D] text-white hover:bg-[#152c4d]",
@@ -70,9 +85,9 @@ const Button = ({ onClick, children, variant = "primary", className = "", icon: 
   };
 
   return (
-    <button onClick={onClick} disabled={disabled || loading} className={`${baseStyle} ${variants[variant]} ${className}`}>
-      {loading ? <Loader2 size={16} className="mr-2 animate-spin" /> : (Icon && <Icon size={16} className="mr-2 flex-shrink-0" />)}
-      <span className="truncate">{children}</span>
+    <button onClick={handleClick} disabled={disabled || loading} className={`${baseStyle} ${variants[variant]} ${className}`}>
+      {loading ? <Loader2 size={16} className="mr-2 animate-spin" /> : (Icon && !feedback && <Icon size={16} className="mr-2 flex-shrink-0" />)}
+      <span className="truncate">{feedback || children}</span>
     </button>
   );
 };
@@ -116,7 +131,13 @@ const callGeminiAPI = async (apiKey, prompt, content) => {
       const parts = data.candidates?.[0]?.content?.parts;
       if (!parts) throw new Error("無法從 Gemini 回應中解析內容。");
       
-      return parts.filter(p => p.text).map(p => p.text).join('\n');
+      let text = parts.filter(p => p.text).map(p => p.text).join('\n');
+
+      // 後處理：移除常見的 LLM 開場白
+      // 針對「好的，我將...」、「Sure, here is...」等開頭進行刪除
+      text = text.replace(/^(好的|沒問題|当然|當然|Sure|Here is).*?[\n\r]+/i, "").trim();
+
+      return text;
       
     } catch (error) {
       lastError = error;
@@ -273,7 +294,7 @@ export default function App() {
       window.getSelection().addRange(range);
       try {
         document.execCommand('copy');
-        alert("已複製完整內容（含圖片位置）！\n\n請直接到 Substack 貼上。\n注意：如果圖片無法顯示，請手動拖曳圖片檔案上傳。");
+        return 'copied'; // 告訴 Button 組件顯示回饋
       } catch (err) {
         alert("複製失敗，請手動選取內容複製。");
       }
@@ -290,7 +311,7 @@ export default function App() {
     try {
       const result = await callGeminiAPI(apiKeys.gemini, PROMPTS.gemini, activeTask.content);
       updateTask(activeTask.id, { geminiReport: result });
-      alert("Gemini 報告產生成功！(已確保使用 Deep Research)");
+      // 成功後不顯示 Alert，直接更新 UI
     } catch (error) {
       alert(`發生錯誤：${error.message}\n\n已嘗試多個模型版本，請檢查 API Key 權限。`);
     } finally {
@@ -307,7 +328,7 @@ export default function App() {
     try {
       const result = await callOpenAIAPI(apiKeys.openai, PROMPTS.chatgpt_role, activeTask.geminiReport);
       updateTask(activeTask.id, { summary: result });
-      alert("ChatGPT 文案撰寫成功！");
+      // 成功後不顯示 Alert
     } catch (error) {
       alert(`發生錯誤：${error.message}`);
     } finally {
@@ -330,7 +351,7 @@ export default function App() {
   const renderWizard = () => {
     if (!activeTask) return null;
 
-    const secureCopy = (text, successMessage) => {
+    const secureCopy = (text) => {
       const fallbackCopyTextToClipboard = (text) => {
         const textArea = document.createElement("textarea");
         textArea.value = text;
@@ -341,30 +362,27 @@ export default function App() {
         textArea.focus();
         textArea.select();
         try {
-          const successful = document.execCommand('copy');
-          if (successful) alert(successMessage);
-          else alert('複製失敗');
+          document.execCommand('copy');
         } catch (err) {
-          alert('複製失敗');
+          console.error('Fallback copy failed', err);
         }
         document.body.removeChild(textArea);
       };
 
       if (!navigator.clipboard) {
         fallbackCopyTextToClipboard(text);
-        return;
+        return 'copied';
       }
-      navigator.clipboard.writeText(text).then(function() {
-        alert(successMessage);
-      }, function(err) {
+      navigator.clipboard.writeText(text).catch(err => {
         fallbackCopyTextToClipboard(text);
       });
+      return 'copied';
     };
 
     const copyGeminiPrompt = (prompt, content) => {
       let fullText = prompt;
       if (content) fullText += `\n\n\n${content}`;
-      secureCopy(fullText, '已複製！\n包含了「指令」與「原始素材」，請貼到 Gemini。');
+      return secureCopy(fullText);
     };
 
     const copyChatGPTPrompt = (rolePrompt, report) => {
@@ -372,11 +390,11 @@ export default function App() {
       if (report) {
         fullText += `\n\n請根據以下「Gemini 研究報告」內容進行撰寫：\n\n「\n${report}\n」`;
       }
-      secureCopy(fullText, '已複製！\n包含了「指令」與「Gemini 報告」，請直接貼到 ChatGPT。');
+      return secureCopy(fullText);
     };
 
-    const copyToClipboard = (text, msg = '已複製指令！') => {
-      secureCopy(text, msg);
+    const copyToClipboard = (text) => {
+      return secureCopy(text);
     };
 
     const summaryParts = parseSummary(activeTask.summary);
@@ -439,7 +457,7 @@ export default function App() {
                       </div>
                       <Button 
                         variant="ghost" 
-                        onClick={() => copyToClipboard(activeTask.geminiReport, "報告內容已複製")}
+                        onClick={() => copyToClipboard(activeTask.geminiReport)}
                         className="h-8 text-xs bg-white border border-green-200 text-green-700 hover:bg-green-100"
                       >
                         <Copy size={12} className="mr-1"/> 複製報告內容
@@ -539,7 +557,7 @@ export default function App() {
                   </div>
                   <p className="text-sm text-gray-500 font-bold">1. 準備製圖素材 (Gemini 報告)：</p>
                   <Button 
-                    onClick={() => copyToClipboard(activeTask.geminiReport || '無報告內容', '已複製 Gemini 報告！\n請貼到 NotebookLM 作為來源。')} 
+                    onClick={() => copyToClipboard(activeTask.geminiReport || '無報告內容')} 
                     icon={Copy} 
                     variant="secondary" 
                     className="w-full border-green-200 text-green-700 hover:bg-green-50"
@@ -552,7 +570,7 @@ export default function App() {
                   <div className="bg-slate-50 p-2 text-xs text-slate-600 rounded mb-2">
                     請選擇：<span className="font-bold text-slate-800">資訊圖表 {'->'} 精簡 {'->'} 橫式</span>
                   </div>
-                  <Button onClick={() => copyToClipboard(PROMPTS.notebooklm_style, '已複製風格指令！\n請貼到 NotebookLM Prompt 欄位。')} icon={Copy} variant="secondary" className="w-full">
+                  <Button onClick={() => copyToClipboard(PROMPTS.notebooklm_style)} icon={Copy} variant="secondary" className="w-full">
                     複製風格指令 (Style Guide)
                   </Button>
                 </div>
