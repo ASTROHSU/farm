@@ -3,9 +3,8 @@ import { Plus, Copy, Check, ArrowRight, FileText, Image as ImageIcon, Share, Tra
 
 // --- 配置與 Prompt 資料庫 ---
 const PROMPTS = {
-  // 修改：強化為 Deep Research Agent 角色，並要求深度挖掘
-  gemini: `請你替我研究這個主題並以繁體中文製作報告，內容包含目前的發展進度是什麼、為什麼會發生這件事（為什麼會做這個決定），以及這件事會對未來產生什麼影響？還有，我也想知道網路上有哪些人對這起事件有哪些正面和反面的論點？他們說了什麼、為什麼這樣說？
-`,
+  // 修改：還原為原始的研究指令
+  gemini: `請你替我研究這個主題並以繁體中文製作報告，內容包含目前的發展進度是什麼、為什麼會發生這件事（為什麼會做這個決定），以及這件事會對未來產生什麼影響？還有，我也想知道網路上有哪些人對這起事件有哪些正面和反面的論點？他們說了什麼、為什麼這樣說？`,
   
   chatgpt_role: `# Role
 你是一位極簡主義的新聞通訊社編輯（如 Reuters 或 AP 風格）。你的任務是將報告以更像是台灣人寫的內容，濃縮為「高密度的純文字摘要」。
@@ -20,19 +19,7 @@ const PROMPTS = {
 1. **第一段**：概述事件發生的主體與核心衝突。
 2. **第二段**：提供支持該事件的關鍵數據、證據或具體處置結果。`,
 
-  notebooklm_style: `統一色票 (Color Palette)：
-* 背景底色： 使用 乾淨的米白色 (Cream / Off-White, #F9F9F7) 或 極淺灰 (Light Grey)，取代原本各自不同的深黑或亮橘背景，確保閱讀舒適度。
-* 主色調 (Primary)： 使用 專業深海藍 (Deep Navy Blue, #1A365D) 用於標題與主要圖標，展現權威感。
-* 強調色 (Accent)： 使用 活力珊瑚紅 (Coral Red) 或 亮眼金 (Muted Gold) 用來標示數據重點（如「700萬美元」、「20.2億」），要在米色背景上能跳出來。
-
-插畫風格 (Illustration Style)：
-* 扁平化向量 (Flat Vector)： 去除過於立體、陰影過重的 3D 效果。
-* 線條風格 (Line Art)： 圖示請使用簡潔的粗線條勾勒（類似「以太坊安全革命」那張圖的風格），給人一種冷靜、分析的感覺。
-* 人物與物件： 簡化人物細節，使用抽象或幾何圖形代表駭客或用戶，避免過於卡通化。
-
-版面配置 (Layout)：
-* 卡片式設計 (Card Design)： 將每個資訊點（Point）放在微圓角的矩形框線中，讓資訊模組化。
-* 字體層級： 標題要是粗體無襯線字（Sans-serif），內文清晰易讀。`
+  notebooklm_style: `統一色票 (Color Palette)： 背景底色： 使用 乾淨的米白色 (Cream / Off-White, #F9F9F7) 或 極淺灰 (Light Grey)，取代原本各自不同的深黑或亮橘背景，確保閱讀舒適度。 主色調 (Primary)： 使用 專業深海藍 (Deep Navy Blue, #1A365D) 用於標題與主要圖標，展現權威感。 強調色 (Accent)： 使用 活力珊瑚紅 (Coral Red) 或 亮眼金 (Muted Gold) 用來標示數據重點（如「700萬美元」、「20.2億」），要在米色背景上能跳出來。 插畫風格 (Illustration Style)： 扁平化向量 (Flat Vector)： 去除過於立體、陰影過重的 3D 效果。 線條風格 (Line Art)： 圖示請使用簡潔的粗線條勾勒（類似「以太坊安全革命」那張圖的風格），給人一種冷靜、分析的感覺。 人物與物件： 簡化人物細節，使用抽象或幾何圖形代表駭客或用戶，避免過於卡通化。 版面配置 (Layout)： 卡片式設計 (Card Design)： 將每個資訊點（Point）放在微圓角的矩形框線中，讓資訊模組化。 字體層級： 標題要是粗體無襯線字（Sans-serif），內文清晰易讀。`
 };
 
 // --- 組件 ---
@@ -166,6 +153,25 @@ export default function App() {
     localStorage.setItem('content-farm-api-keys', JSON.stringify(apiKeys));
   }, [apiKeys]);
 
+  // 新增：設定網頁標題與 Favicon
+  useEffect(() => {
+    // 1. 設定標題
+    document.title = "內容農場｜週報製作 SOP";
+
+    // 2. 動態設定 Favicon (使用 Robot Emoji)
+    const setFavicon = () => {
+      let link = document.querySelector("link[rel~='icon']");
+      if (!link) {
+        link = document.createElement('link');
+        link.rel = 'icon';
+        document.getElementsByTagName('head')[0].appendChild(link);
+      }
+      // 使用 SVG data URI 作為 favicon，兼容性好且不需要外部圖片資源
+      link.href = `data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>🤖</text></svg>`;
+    };
+    setFavicon();
+  }, []);
+
   const addTask = (rawContent) => {
     if (!rawContent.trim()) return;
 
@@ -238,7 +244,11 @@ export default function App() {
       window.getSelection().addRange(range);
       try {
         document.execCommand('copy');
-        alert("文字與格式已複製！\n\n【⚠️ 重要提醒】\n由於瀏覽器安全限制，圖片無法直接貼上。\n請直接將您電腦中的圖片「拖曳」到 Substack 編輯器中。");
+        
+        // 成功複製後，直接標記完成並關閉視窗
+        updateTask(activeTask.id, { status: 'published' });
+        setActiveTaskId(null);
+        
         return 'copied';
       } catch (err) {
         alert("複製失敗，請手動選取內容複製。");
@@ -246,11 +256,6 @@ export default function App() {
       window.getSelection().removeAllRanges();
     }
   };
-
-  // Gemini 生成功能已暫時移除
-  /*
-  const handleGeminiGenerate = async () => { ... }
-  */
 
   const handleChatGPTGenerate = async () => {
     if (!apiKeys.openai) {
@@ -337,12 +342,7 @@ export default function App() {
       if (report) {
         fullText += `\n\n請根據以下「Gemini 研究報告」內容進行撰寫：\n\n「\n${report}\n」`;
       }
-      const result = secureCopy(fullText);
-      // 修改：ChatGPT 手動複製不開啟網頁，因為主要依賴 API
-      // if (result === 'copied') {
-      //   window.open('https://chatgpt.com/', '_blank');
-      // }
-      return result;
+      return secureCopy(fullText);
     };
 
     const copyToClipboard = (text, openUrl = null) => {
@@ -679,6 +679,23 @@ export default function App() {
             </div>
 
             <div>
+              <label className="block text-sm font-bold text-gray-700 mb-1">Google Gemini API Key</label>
+              <div className="relative">
+                <Key className="absolute left-3 top-2.5 text-gray-400" size={16} />
+                <input 
+                  type="password"
+                  className="w-full border rounded pl-10 p-2 text-base sm:text-sm focus:ring-2 focus:ring-blue-500 outline-none"
+                  placeholder="AIzaSy..."
+                  value={apiKeys.gemini}
+                  onChange={(e) => setApiKeys({...apiKeys, gemini: e.target.value})}
+                />
+              </div>
+              <a href="https://aistudio.google.com/app/apikey" target="_blank" rel="noreferrer" className="text-xs text-blue-500 hover:underline mt-1 block text-right">
+                取得 Gemini API Key
+              </a>
+            </div>
+
+            <div>
               <label className="block text-sm font-bold text-gray-700 mb-1">OpenAI API Key</label>
               <div className="relative">
                 <Key className="absolute left-3 top-2.5 text-gray-400" size={16} />
@@ -749,8 +766,7 @@ export default function App() {
         <div className="max-w-7xl mx-auto flex justify-between items-center">
           <div className="flex items-center space-x-2">
             <FileText size={20} className="sm:w-6 sm:h-6" />
-            <h1 className="text-lg sm:text-xl font-bold tracking-wide">內容農場 OS</h1>
-            <span className="hidden sm:inline text-xs opacity-70 font-normal ml-2">週報製作 v4.2</span>
+            <h1 className="text-lg sm:text-xl font-bold tracking-wide">內容農場｜週報製作 SOP</h1>
           </div>
           <div className="flex items-center space-x-2">
             <Button 
