@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Plus, Copy, Check, ArrowRight, FileText, Trash2, ExternalLink, X, AlignLeft, Archive, AlertTriangle, ClipboardPaste, Sparkles, Loader2, LayoutTemplate } from 'lucide-react';
+import { Plus, Copy, Check, ArrowRight, FileText, Trash2, ExternalLink, Settings, X, AlignLeft, Archive, AlertTriangle, ClipboardPaste, Sparkles, Loader2, Key, LayoutTemplate } from 'lucide-react';
 
 // --- 配置與 Prompt 資料庫 ---
 const PROMPTS = {
@@ -175,12 +175,27 @@ export default function App() {
     }
   });
 
-  // 直接從環境變數讀取 API Key（不會暴露在 GitHub）
+  const [apiKeys, setApiKeys] = useState(() => {
+    try {
+      const saved = localStorage.getItem('content-farm-api-keys');
+      if (saved) {
+        return JSON.parse(saved);
+      }
+      // 如果 localStorage 中沒有，嘗試從環境變數讀取作為預設值（不會暴露在 GitHub）
+      const envKey = import.meta.env.VITE_OPENAI_API_KEY;
+      return { openai: envKey || '' };
+    } catch (e) {
+      return { openai: '' };
+    }
+  });
+
+  // 取得 API Key：優先使用使用者設定的，如果沒有則使用環境變數
   const getOpenAIKey = () => {
-    return import.meta.env.VITE_OPENAI_API_KEY || '';
+    return apiKeys.openai || import.meta.env.VITE_OPENAI_API_KEY || '';
   };
 
   const [isModalOpen, setIsModalOpen] = useState(false);
+  const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [activeTaskId, setActiveTaskId] = useState(null);
   const [confirmDialog, setConfirmDialog] = useState({ isOpen: false, type: '', id: null });
   
@@ -213,9 +228,22 @@ export default function App() {
     };
   }, []);
 
+  // 初始化時，如果環境變數有 API Key 且 localStorage 中沒有，則自動填入
+  useEffect(() => {
+    const envKey = import.meta.env.VITE_OPENAI_API_KEY;
+    if (envKey && !apiKeys.openai) {
+      setApiKeys({ openai: envKey });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []); // 只在首次載入時執行
+
   useEffect(() => {
     localStorage.setItem('content-farm-tasks', JSON.stringify(tasks));
   }, [tasks]);
+
+  useEffect(() => {
+    localStorage.setItem('content-farm-api-keys', JSON.stringify(apiKeys));
+  }, [apiKeys]);
 
   // 新增：設定網頁標題與 Favicon
   useEffect(() => {
@@ -322,7 +350,8 @@ export default function App() {
   const handleChatGPTGenerate = async () => {
     const apiKey = getOpenAIKey();
     if (!apiKey) {
-      alert("系統未設定 OpenAI API Key。請檢查環境變數設定。");
+      alert("請先點擊右上角「設定」，填入 OpenAI API Key。");
+      setIsSettingsOpen(true);
       return;
     }
     
@@ -759,6 +788,54 @@ export default function App() {
   };
 
 
+  const renderSettingsModal = () => {
+    if (!isSettingsOpen) return null;
+    return (
+      <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-[70] p-4 backdrop-blur-sm animate-in fade-in duration-150">
+        <div className="bg-white rounded-xl shadow-2xl p-6 max-w-md w-full">
+          <div className="flex items-center justify-between mb-6">
+            <h3 className="text-xl font-bold flex items-center text-slate-800">
+              <Settings className="mr-2" size={24} /> 系統設定 (API)
+            </h3>
+            <button onClick={() => setIsSettingsOpen(false)} className="text-gray-400 hover:text-gray-600"><X /></button>
+          </div>
+          
+          <div className="space-y-4">
+            <div className="p-3 bg-blue-50 text-blue-800 rounded-lg text-sm mb-4">
+              填入 API Key 後，系統將啟用「✨ AI 自動產生」功能。
+              <br/>Key 僅儲存在您的瀏覽器中，不會上傳伺服器。
+              <br/><br/>
+              <span className="text-xs text-blue-600">
+                提示：如果環境變數已設定 API Key，系統會自動使用。您也可以在此手動填入自己的 Key。
+              </span>
+            </div>
+
+            <div>
+              <label className="block text-sm font-bold text-gray-700 mb-1">OpenAI API Key</label>
+              <div className="relative">
+                <Key className="absolute left-3 top-2.5 text-gray-400" size={16} />
+                <input 
+                  type="password"
+                  className="w-full border rounded pl-10 p-2 text-base sm:text-sm focus:ring-2 focus:ring-blue-500 outline-none"
+                  placeholder="sk-..."
+                  value={apiKeys.openai}
+                  onChange={(e) => setApiKeys({...apiKeys, openai: e.target.value})}
+                />
+              </div>
+              <a href="https://platform.openai.com/api-keys" target="_blank" rel="noreferrer" className="text-xs text-blue-500 hover:underline mt-1 block text-right">
+                取得 OpenAI API Key
+              </a>
+            </div>
+          </div>
+
+          <div className="mt-8 flex justify-end">
+            <Button onClick={() => setIsSettingsOpen(false)}>儲存並關閉</Button>
+          </div>
+        </div>
+      </div>
+    );
+  };
+
   const renderConfirmDialog = () => {
     if (!confirmDialog.isOpen) return null;
 
@@ -807,6 +884,13 @@ export default function App() {
             <h1 className="text-lg sm:text-xl font-bold tracking-wide">內容農場｜週報製作 SOP</h1>
           </div>
           <div className="flex items-center space-x-2">
+            <Button 
+              variant="ghost" 
+              onClick={() => setIsSettingsOpen(true)}
+              className="text-white hover:bg-white/10"
+            >
+              <Settings size={18} />
+            </Button>
             <Button 
               variant="warning" 
               onClick={handleArchiveRequest}
@@ -912,6 +996,9 @@ export default function App() {
 
       {/* The Wizard Modal */}
       {renderWizard()}
+      
+      {/* Settings Modal */}
+      {renderSettingsModal()}
 
       {/* Confirmation Dialog */}
       {renderConfirmDialog()}
