@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Plus, Copy, Check, ArrowRight, FileText, Image as ImageIcon, Share, Trash2, ExternalLink, Settings, X, AlignLeft, Archive, AlertTriangle, ClipboardPaste, Sparkles, Loader2, Key, LayoutTemplate } from 'lucide-react';
+import { Plus, Copy, Check, ArrowRight, FileText, Image as ImageIcon, Share, Trash2, ExternalLink, Settings, X, AlignLeft, Archive, AlertTriangle, ClipboardPaste, Sparkles, Loader2, Key, Upload, LayoutTemplate } from 'lucide-react';
 
 // --- 配置與 Prompt 資料庫 ---
 const PROMPTS = {
@@ -406,7 +406,8 @@ export default function App() {
 
     return (
       <div className="fixed inset-0 bg-black/50 flex items-end sm:items-center justify-center z-50 sm:p-4 backdrop-blur-sm">
-        <div className="bg-[#F9F9F7] w-full max-w-4xl h-[95vh] sm:h-[90vh] rounded-t-2xl sm:rounded-xl shadow-2xl overflow-hidden flex flex-col animate-in slide-in-from-bottom duration-300">
+        {/* RWD Optimization: h-[100dvh] for mobile, rounded-none for mobile */}
+        <div className="bg-[#F9F9F7] w-full max-w-4xl h-[100dvh] sm:h-[90vh] rounded-none sm:rounded-xl shadow-2xl overflow-hidden flex flex-col animate-in slide-in-from-bottom duration-300 overscroll-none">
           
           <div className="bg-[#1A365D] text-white p-4 flex justify-between items-center flex-shrink-0">
             <div className="flex-1 min-w-0 mr-4">
@@ -453,6 +454,11 @@ export default function App() {
                     {renderMarkdownText(summaryParts.p1 || "無摘要內容")}
                   </p>
                   
+                  {/* Image Placeholder */}
+                  <div className="my-8 p-4 bg-gray-50 border-2 border-dashed border-gray-300 rounded-lg text-center">
+                    <span className="text-gray-400 font-mono">[此處將插入資訊圖表]</span>
+                  </div>
+
                   <p className="mb-6 text-lg whitespace-pre-line">
                     {renderMarkdownText(summaryParts.p2)}
                   </p>
@@ -614,19 +620,13 @@ export default function App() {
                   </Button>
                 </div>
                 
-                <div className="flex items-center space-x-3 p-2 bg-gray-50 rounded cursor-pointer hover:bg-gray-100 transition-colors" onClick={() => updateTask(activeTask.id, { imageStatus: !activeTask.imageStatus })}>
-                  <div className={`w-5 h-5 rounded border flex items-center justify-center transition-colors ${activeTask.imageStatus ? 'bg-blue-600 border-blue-600' : 'border-gray-300 bg-white'}`}>
-                    {activeTask.imageStatus && <Check size={14} className="text-white" />}
-                  </div>
-                  <label className="text-sm font-medium cursor-pointer flex-1 select-none">圖表已製作並下載</label>
-                </div>
+                {/* 移除了勾選確認方塊 */}
 
                 {activeTask.status === 'visuals' && (
                   <div className="mt-4 flex justify-end">
                     <Button 
                        onClick={() => updateTask(activeTask.id, { status: 'review' })} 
                        icon={ArrowRight}
-                       disabled={!activeTask.imageStatus}
                     >
                       下一步：上架整合
                     </Button>
@@ -647,6 +647,15 @@ export default function App() {
                     <label className="text-sm font-bold text-gray-700 flex items-center">
                       <LayoutTemplate size={16} className="mr-2"/> 草稿預覽 (自動排版)
                     </label>
+                    <Button 
+                      onClick={handleCopySubstackDraft} 
+                      icon={Copy} 
+                      variant="magic" 
+                      className="text-xs py-1 px-3 h-8"
+                      disabled={!activeTask.summary}
+                    >
+                      一鍵複製完整草稿
+                    </Button>
                   </div>
                   
                   <div 
@@ -662,6 +671,11 @@ export default function App() {
                       {renderMarkdownText(summaryParts.p1 || "等待摘要生成...")}
                     </p>
                     
+                    {/* Placeholder for Infographic */}
+                    <div className="my-8 p-4 bg-gray-50 border-2 border-dashed border-gray-300 rounded-lg text-center">
+                      <span className="text-gray-400 font-mono">[此處將插入資訊圖表]</span>
+                    </div>
+
                     <p className="mb-6 text-lg whitespace-pre-line">
                       {renderMarkdownText(summaryParts.p2)}
                     </p>
