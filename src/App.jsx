@@ -79,15 +79,13 @@ const Button = ({ onClick, children, variant = "primary", className = "", icon: 
 
 // --- API Service ---
 
-// 自動嘗試多個模型以確保 Deep Research 可用
 const callGeminiAPI = async (apiKey, prompt, content) => {
   const fullPrompt = `${prompt}\n\n**原始素材：**\n${content}`;
   
-  // 模型優先順序清單：使用者指定的 -> 最新預覽 -> 穩定版 Pro
   const modelsToTry = [
-    'gemini-3.0-pro', // 用戶指定
-    'gemini-2.0-flash-exp', // 備用1
-    'gemini-1.5-pro' // 備用2 (通常最穩定支援 Search)
+    'gemini-3.0-pro', 
+    'gemini-2.0-flash-exp', 
+    'gemini-1.5-pro' 
   ];
 
   let lastError = null;
@@ -100,14 +98,13 @@ const callGeminiAPI = async (apiKey, prompt, content) => {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           contents: [{ parts: [{ text: fullPrompt }] }],
-          tools: [{ google_search: {} }] // 啟用 Deep Research (Grounding)
+          tools: [{ google_search: {} }] 
         })
       });
       
       const data = await response.json();
       
       if (data.error) {
-        // 如果是 Model not found，繼續嘗試下一個
         if (data.error.code === 404 || data.error.message.includes('not found') || data.error.message.includes('supported')) {
           console.warn(`Model ${model} failed, trying next...`);
           lastError = new Error(`Model ${model} not available: ${data.error.message}`);
@@ -123,14 +120,12 @@ const callGeminiAPI = async (apiKey, prompt, content) => {
       
     } catch (error) {
       lastError = error;
-      // 如果不是 404 類錯誤（例如 API Key 錯誤），通常不應該繼續試，但為了保險起見，我們讓迴圈繼續直到沒模型
       if (error.message.includes('API key') || error.message.includes('permission')) {
         throw error;
       }
     }
   }
 
-  // 如果都失敗
   throw lastError || new Error("所有 Gemini 模型嘗試皆失敗，請確認 API Key 或網絡狀態。");
 };
 
@@ -194,7 +189,6 @@ export default function App() {
   const [isGeneratingGemini, setIsGeneratingGemini] = useState(false);
   const [isGeneratingGPT, setIsGeneratingGPT] = useState(false);
 
-  // 預覽區 Ref
   const substackPreviewRef = useRef(null);
 
   const activeTask = tasks.find(t => t.id === activeTaskId);
@@ -222,13 +216,12 @@ export default function App() {
       content: rawContent,
       geminiReport: '', 
       summary: '',
-      imageBlobUrl: null, // 用於存儲上傳圖片的預覽 URL
+      imageBlobUrl: null, 
       status: 'inbox',
       created_at: new Date().toISOString(),
       imageStatus: false,
       substackLink: ''
     };
-    // 修改這裡：將新任務放在陣列最前面
     setTasks([newTask, ...tasks]);
     setIsModalOpen(false);
   };
@@ -264,7 +257,6 @@ export default function App() {
     setConfirmDialog({ isOpen: false, type: '', id: null });
   };
 
-  // --- Image Upload Handler ---
   const handleImageUpload = (e) => {
     const file = e.target.files[0];
     if (file) {
@@ -273,34 +265,27 @@ export default function App() {
     }
   };
 
-  // --- Copy Handler ---
   const handleCopySubstackDraft = () => {
     if (substackPreviewRef.current) {
-      // 嘗試選取並複製 HTML (這能保留圖片標籤，但貼上到 Substack 是否成功取決於瀏覽器與 Substack 的相容性)
       const range = document.createRange();
       range.selectNode(substackPreviewRef.current);
       window.getSelection().removeAllRanges();
       window.getSelection().addRange(range);
-      
       try {
         document.execCommand('copy');
         alert("已複製完整內容（含圖片位置）！\n\n請直接到 Substack 貼上。\n注意：如果圖片無法顯示，請手動拖曳圖片檔案上傳。");
       } catch (err) {
         alert("複製失敗，請手動選取內容複製。");
       }
-      
       window.getSelection().removeAllRanges();
     }
   };
-
-  // --- AI Generation Handlers ---
 
   const handleGeminiGenerate = async () => {
     if (!apiKeys.gemini) {
       alert("請先點擊右上角「設定」，填入 Google Gemini API Key。");
       return;
     }
-    
     setIsGeneratingGemini(true);
     try {
       const result = await callGeminiAPI(apiKeys.gemini, PROMPTS.gemini, activeTask.content);
@@ -318,7 +303,6 @@ export default function App() {
       alert("請先點擊右上角「設定」，填入 OpenAI API Key。");
       return;
     }
-    
     setIsGeneratingGPT(true);
     try {
       const result = await callOpenAIAPI(apiKeys.openai, PROMPTS.chatgpt_role, activeTask.geminiReport);
@@ -331,32 +315,21 @@ export default function App() {
     }
   };
 
-  // --- Helper to parse summary into parts ---
   const parseSummary = (text) => {
     if (!text) return { title: '', p1: '', p2: '' };
-    
-    // 簡單解析邏輯：假設第一行是標題，後面用空行分隔段落
     const lines = text.split('\n').filter(line => line.trim() !== '');
     const title = lines[0] || '';
-    
-    // 尋找段落
     let p1 = '';
     let p2 = '';
-    
-    // 移除標題後剩下的部分
     const remaining = lines.slice(1);
-    
     if (remaining.length > 0) p1 = remaining[0];
-    if (remaining.length > 1) p2 = remaining.slice(1).join('\n\n'); // 剩下的都當第二段
-
+    if (remaining.length > 1) p2 = remaining.slice(1).join('\n\n');
     return { title, p1, p2 };
   };
 
-  // 處理流程介面 (The Wizard)
   const renderWizard = () => {
     if (!activeTask) return null;
 
-    // --- 強化版複製功能 ---
     const secureCopy = (text, successMessage) => {
       const fallbackCopyTextToClipboard = (text) => {
         const textArea = document.createElement("textarea");
@@ -381,7 +354,6 @@ export default function App() {
         fallbackCopyTextToClipboard(text);
         return;
       }
-      
       navigator.clipboard.writeText(text).then(function() {
         alert(successMessage);
       }, function(err) {
@@ -406,7 +378,6 @@ export default function App() {
     const copyToClipboard = (text, msg = '已複製指令！') => {
       secureCopy(text, msg);
     };
-    // ------------------------------------------------
 
     const summaryParts = parseSummary(activeTask.summary);
 
@@ -414,7 +385,6 @@ export default function App() {
       <div className="fixed inset-0 bg-black/50 flex items-end sm:items-center justify-center z-50 sm:p-4 backdrop-blur-sm">
         <div className="bg-[#F9F9F7] w-full max-w-4xl h-[95vh] sm:h-[90vh] rounded-t-2xl sm:rounded-xl shadow-2xl overflow-hidden flex flex-col animate-in slide-in-from-bottom duration-300">
           
-          {/* Header */}
           <div className="bg-[#1A365D] text-white p-4 flex justify-between items-center flex-shrink-0">
             <div className="flex-1 min-w-0 mr-4">
               <h2 className="text-lg sm:text-xl font-bold truncate">{activeTask.title}</h2>
@@ -430,10 +400,8 @@ export default function App() {
             </button>
           </div>
 
-          {/* Body */}
           <div className="flex-1 overflow-y-auto p-4 sm:p-6 space-y-6 sm:space-y-8 pb-20 sm:pb-6">
             
-            {/* Step 1: Gemini */}
             <section className={`transition-all duration-300 ${activeTask.status === 'inbox' ? 'opacity-100 scale-100' : 'opacity-50 grayscale'}`}>
               <div className="flex items-center mb-3">
                 <div className={`w-7 h-7 sm:w-8 sm:h-8 rounded-full flex items-center justify-center font-bold mr-3 text-sm sm:text-base ${activeTask.status === 'inbox' ? 'bg-blue-600 text-white' : 'bg-blue-100 text-blue-800'}`}>1</div>
@@ -463,7 +431,6 @@ export default function App() {
                   </Button>
                 </div>
 
-                {/* AI 產生後的報告預覽區 */}
                 {activeTask.geminiReport && (
                   <div className="mt-4 p-3 bg-green-50 border border-green-200 rounded-lg animate-in fade-in duration-300">
                     <div className="flex items-center justify-between mb-2">
@@ -494,7 +461,6 @@ export default function App() {
               </Card>
             </section>
 
-            {/* Step 2: ChatGPT */}
             <section className={`transition-all duration-300 ${activeTask.status === 'processing' ? 'opacity-100 scale-100' : (activeTask.status === 'inbox' ? 'opacity-30 pointer-events-none' : 'opacity-50 grayscale')}`}>
               <div className="flex items-center mb-3">
                 <div className={`w-7 h-7 sm:w-8 sm:h-8 rounded-full flex items-center justify-center font-bold mr-3 text-sm sm:text-base ${activeTask.status === 'processing' ? 'bg-purple-600 text-white' : 'bg-purple-100 text-purple-800'}`}>2</div>
@@ -502,14 +468,13 @@ export default function App() {
               </div>
               <Card className={`p-4 bg-white transition-all ${activeTask.status === 'processing' ? 'ring-2 ring-purple-500 shadow-lg' : ''}`}>
                 
-                {/* 新增：Gemini 報告輸入區 */}
                 <div className="mb-6 bg-slate-50 p-4 rounded-lg border border-slate-200">
                   <div className="flex items-center mb-2 text-purple-800 font-bold text-sm">
                     <ClipboardPaste size={16} className="mr-2" />
                     第一步：Gemini 研究報告 (已自動帶入)
                   </div>
                   <textarea 
-                    className="w-full border rounded p-3 text-sm h-32 focus:ring-2 focus:ring-purple-500 outline-none" 
+                    className="w-full border rounded p-3 text-base sm:text-sm h-32 focus:ring-2 focus:ring-purple-500 outline-none" 
                     placeholder="如果第一步使用了 AI 自動產生，這裡會自動填入。如果是手動，請在此貼上 Gemini 的報告..."
                     value={activeTask.geminiReport || ''}
                     onChange={(e) => updateTask(activeTask.id, { geminiReport: e.target.value })}
@@ -540,7 +505,7 @@ export default function App() {
                 <div className="border-t pt-4">
                   <p className="text-sm text-gray-500 mb-2 font-bold">第三步：最終摘要 (AI 自動填入或手動貼上)</p>
                   <textarea 
-                    className="w-full border rounded p-3 text-sm h-32 focus:ring-2 focus:ring-purple-500 outline-none resize-none" 
+                    className="w-full border rounded p-3 text-base sm:text-sm h-32 focus:ring-2 focus:ring-purple-500 outline-none resize-none" 
                     placeholder="最終產出的標題與摘要會顯示在這裡..."
                     value={activeTask.summary}
                     onChange={(e) => updateTask(activeTask.id, { summary: e.target.value })}
@@ -561,7 +526,6 @@ export default function App() {
               </Card>
             </section>
 
-            {/* Step 3: NotebookLM */}
             <section className={`transition-all duration-300 ${activeTask.status === 'visuals' ? 'opacity-100 scale-100' : (['inbox', 'processing'].includes(activeTask.status) ? 'opacity-30 pointer-events-none' : 'opacity-50 grayscale')}`}>
               <div className="flex items-center mb-3">
                 <div className={`w-7 h-7 sm:w-8 sm:h-8 rounded-full flex items-center justify-center font-bold mr-3 text-sm sm:text-base ${activeTask.status === 'visuals' ? 'bg-green-600 text-white' : 'bg-green-100 text-green-800'}`}>3</div>
@@ -614,7 +578,6 @@ export default function App() {
               </Card>
             </section>
 
-             {/* Step 4: Substack (Enhanced Integration) */}
              <section className={`transition-all duration-300 ${activeTask.status === 'review' ? 'opacity-100 scale-100' : (activeTask.status === 'published' ? 'opacity-50 grayscale' : 'opacity-30 pointer-events-none')}`}>
               <div className="flex items-center mb-3">
                 <div className={`w-7 h-7 sm:w-8 sm:h-8 rounded-full flex items-center justify-center font-bold mr-3 text-sm sm:text-base ${activeTask.status === 'review' ? 'bg-orange-600 text-white' : 'bg-orange-100 text-orange-800'}`}>4</div>
@@ -622,7 +585,6 @@ export default function App() {
               </div>
               <Card className={`p-4 bg-white border-orange-200 bg-orange-50 transition-all ${activeTask.status === 'review' ? 'ring-2 ring-orange-400 shadow-lg' : ''}`}>
                 
-                {/* 圖片上傳區 */}
                 <div className="mb-6">
                   <label className="block text-sm font-bold text-gray-700 mb-2 flex items-center">
                     <Upload size={16} className="mr-2"/> 上傳資訊圖表 (NotebookLM 產出)
@@ -640,7 +602,6 @@ export default function App() {
                   </div>
                 </div>
 
-                {/* Substack 預覽區 */}
                 <div className="mb-6">
                   <div className="flex justify-between items-end mb-2">
                     <label className="text-sm font-bold text-gray-700 flex items-center">
@@ -657,19 +618,15 @@ export default function App() {
                     </Button>
                   </div>
                   
-                  {/* Preview Container - This is what gets copied */}
                   <div 
                     ref={substackPreviewRef}
                     className="bg-white border border-gray-200 p-6 rounded-lg shadow-sm text-gray-800 leading-relaxed font-serif"
                     style={{ minHeight: '300px' }}
                   >
-                    {/* Title */}
                     <h1 className="text-2xl font-bold mb-4 text-black border-b pb-2">{summaryParts.title || activeTask.title}</h1>
                     
-                    {/* Para 1 */}
                     <p className="mb-6 text-lg whitespace-pre-line">{summaryParts.p1 || "等待摘要生成..."}</p>
                     
-                    {/* Image Insert */}
                     <div className="my-8 flex justify-center">
                       {activeTask.imageBlobUrl ? (
                         <img 
@@ -685,10 +642,8 @@ export default function App() {
                       )}
                     </div>
 
-                    {/* Para 2 */}
                     <p className="mb-6 text-lg whitespace-pre-line">{summaryParts.p2}</p>
                     
-                    {/* Source */}
                     {activeTask.url && (
                       <div className="text-sm text-gray-500 mt-8 pt-4 border-t">
                         資料來源：<a href={activeTask.url} target="_blank" rel="noreferrer" className="text-blue-600 underline">原始新聞連結</a>
@@ -703,7 +658,7 @@ export default function App() {
                   </p>
                   <input 
                     type="text"
-                    className="w-full border rounded p-2 mb-4 text-sm focus:ring-2 focus:ring-orange-300 outline-none"
+                    className="w-full border rounded p-2 mb-4 text-base sm:text-sm focus:ring-2 focus:ring-orange-300 outline-none"
                     placeholder="https://substack.com/..."
                     value={activeTask.substackLink}
                     onChange={(e) => updateTask(activeTask.id, { substackLink: e.target.value })}
@@ -713,7 +668,7 @@ export default function App() {
                       <Button 
                          onClick={() => {
                            updateTask(activeTask.id, { status: 'published' });
-                           setActiveTaskId(null); // 完成後關閉視窗
+                           setActiveTaskId(null); 
                          }} 
                          icon={Check}
                          disabled={!activeTask.substackLink}
@@ -756,7 +711,7 @@ export default function App() {
                 <Key className="absolute left-3 top-2.5 text-gray-400" size={16} />
                 <input 
                   type="password"
-                  className="w-full border rounded pl-10 p-2 text-sm focus:ring-2 focus:ring-blue-500 outline-none"
+                  className="w-full border rounded pl-10 p-2 text-base sm:text-sm focus:ring-2 focus:ring-blue-500 outline-none"
                   placeholder="AIzaSy..."
                   value={apiKeys.gemini}
                   onChange={(e) => setApiKeys({...apiKeys, gemini: e.target.value})}
@@ -773,7 +728,7 @@ export default function App() {
                 <Key className="absolute left-3 top-2.5 text-gray-400" size={16} />
                 <input 
                   type="password"
-                  className="w-full border rounded pl-10 p-2 text-sm focus:ring-2 focus:ring-blue-500 outline-none"
+                  className="w-full border rounded pl-10 p-2 text-base sm:text-sm focus:ring-2 focus:ring-blue-500 outline-none"
                   placeholder="sk-..."
                   value={apiKeys.openai}
                   onChange={(e) => setApiKeys({...apiKeys, openai: e.target.value})}
@@ -948,7 +903,7 @@ export default function App() {
                   name="rawContent" 
                   autoFocus
                   required
-                  className="w-full border p-3 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none h-48 text-sm leading-relaxed resize-none text-gray-700" 
+                  className="w-full border p-3 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none h-48 text-base sm:text-sm leading-relaxed resize-none text-gray-700" 
                   placeholder="在此貼上任何內容：
 - 一整段還沒整理的英文新聞
 - 一個想研究的議題關鍵字
