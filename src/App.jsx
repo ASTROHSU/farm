@@ -3,6 +3,7 @@ import { Plus, Copy, Check, ArrowRight, FileText, Image as ImageIcon, Share, Tra
 
 // --- 配置與 Prompt 資料庫 ---
 const PROMPTS = {
+  // 修改：還原為原始的研究指令
   gemini: `請你替我研究這個主題並以繁體中文製作報告，內容包含目前的發展進度是什麼、為什麼會發生這件事（為什麼會做這個決定），以及這件事會對未來產生什麼影響？還有，我也想知道網路上有哪些人對這起事件有哪些正面和反面的論點？他們說了什麼、為什麼這樣說？`,
   
   chatgpt_role: `# Role
@@ -44,10 +45,12 @@ const Badge = ({ children, color = "blue" }) => {
   );
 };
 
+// 修改 Button 組件以支援暫時性文字變化 (Copied feedback)
 const Button = ({ onClick, children, variant = "primary", className = "", icon: Icon, disabled = false, loading = false }) => {
   const [feedback, setFeedback] = useState(null);
   
   const handleClick = async (e) => {
+    // 攔截 onClick 來處理複製回饋，如果 onClick 回傳 "copied"，則顯示回饋
     const result = await onClick(e);
     if (result === 'copied') {
       setFeedback('已複製！');
@@ -73,7 +76,74 @@ const Button = ({ onClick, children, variant = "primary", className = "", icon: 
   );
 };
 
-// --- API Service ---
+// --- Google Sheets API Service (Placeholder) ---
+// 在此環境中移除 process.env 或 import.meta.env 的依賴
+const GOOGLE_SHEETS_API_URL = ''; 
+
+// 從 Google Sheets 讀取所有任務
+const fetchTasksFromSheets = async () => {
+  if (!GOOGLE_SHEETS_API_URL) {
+    // console.warn('⚠️ Google Sheets API URL 未設定，將使用本地儲存');
+    return null;
+  }
+  
+  console.log('📡 正在從 Google Sheets 讀取資料...');
+  
+  try {
+    const url = `${GOOGLE_SHEETS_API_URL}?t=${Date.now()}`;
+    const response = await fetch(url);
+    
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+    }
+    
+    const data = await response.json();
+    
+    if (data.error) {
+      console.error('❌ Google Sheets 錯誤:', data.error);
+      return null;
+    }
+    
+    const tasks = Array.isArray(data) ? data.filter(task => task.status !== 'archived') : null;
+    return tasks;
+  } catch (error) {
+    console.error('❌ 讀取 Google Sheets 失敗:', error);
+    return null;
+  }
+};
+
+// 同步任務到 Google Sheets
+const syncTaskToSheets = async (action, task) => {
+  if (!GOOGLE_SHEETS_API_URL) return { success: false, error: 'API URL 未設定' };
+  
+  try {
+    const payload = { action, task };
+    
+    const response = await fetch(GOOGLE_SHEETS_API_URL, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(payload),
+    });
+    
+    if (!response.ok) {
+      const errorText = await response.text();
+      throw new Error(`HTTP ${response.status}: ${errorText}`);
+    }
+    
+    const result = await response.json();
+    
+    if (result.error) {
+      return { success: false, error: result.error };
+    }
+    
+    return { success: true, result };
+  } catch (error) {
+    console.error('❌ 同步到 Google Sheets 失敗:', error);
+    return { success: false, error: error.message };
+  }
+};
 
 const callOpenAIAPI = async (apiKey, systemPrompt, userContent) => {
   const userMessage = `請根據以下「Gemini 研究報告」內容進行撰寫：\n\n「\n${userContent}\n」`;
@@ -158,37 +228,25 @@ const triggerConfetti = () => {
 // --- 主應用程式 ---
 
 export default function App() {
-  // 任務資料結構現在包含 step (1-4)
-  const [tasks, setTasks] = useState(() => {
-    try {
-      const saved = localStorage.getItem('content-farm-tasks');
-      const parsed = saved ? JSON.parse(saved) : [];
-      // 簡單的資料遷移邏輯，確保舊資料有 step 和新的 status
-      return parsed.map(t => {
-        if (t.step) return t; // 已經有 step，無需遷移
-        // 舊 status 映射
-        let newStatus = 'todo';
-        let newStep = 1;
-        if (t.status === 'inbox') { newStatus = 'todo'; newStep = 1; }
-        else if (t.status === 'processing') { newStatus = 'in_progress'; newStep = 2; }
-        else if (t.status === 'visuals') { newStatus = 'in_progress'; newStep = 3; }
-        else if (t.status === 'review') { newStatus = 'in_progress'; newStep = 4; }
-        else if (t.status === 'published' || t.status === 'done') { newStatus = 'done'; newStep = 4; }
-        return { ...t, status: newStatus, step: newStep };
-      });
-    } catch (e) {
-      return [];
-    }
-  });
+  const [tasks, setTasks] = useState([]);
+  const [isLoadingTasks, setIsLoadingTasks] = useState(true);
 
   const [apiKeys, setApiKeys] = useState(() => {
     try {
       const saved = localStorage.getItem('content-farm-api-keys');
-      return saved ? JSON.parse(saved) : { openai: '' };
+      if (saved) {
+        return JSON.parse(saved);
+      }
+      return { openai: '' };
     } catch (e) {
       return { openai: '' };
     }
   });
+
+  // 取得 API Key
+  const getOpenAIKey = () => {
+    return apiKeys.openai || '';
+  };
 
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
@@ -196,6 +254,7 @@ export default function App() {
   const [confirmDialog, setConfirmDialog] = useState({ isOpen: false, type: '', id: null });
   
   const [isGeneratingGPT, setIsGeneratingGPT] = useState(false);
+  const [syncStatus, setSyncStatus] = useState({ lastSync: null, error: null, testing: false });
 
   const substackPreviewRef = useRef(null);
   const wizardScrollRef = useRef(null);
@@ -206,8 +265,10 @@ export default function App() {
   // 當打開卡片時，自動捲動到當前步驟
   useEffect(() => {
     if (activeTask && wizardScrollRef.current) {
-      // 簡單的延遲以確保 DOM 已渲染
       setTimeout(() => {
+        // 如果是已完成 (done) 的任務，不進行捲動，維持在頂端
+        if (activeTask.status === 'done') return;
+
         const stepId = `step-${activeTask.step}`;
         const element = document.getElementById(stepId);
         if (element) {
@@ -215,8 +276,9 @@ export default function App() {
         }
       }, 100);
     }
-  }, [activeTaskId]); // 依賴 activeTaskId，每次打開新任務時觸發
+  }, [activeTaskId]); 
 
+  // 動態計算視窗高度
   useEffect(() => {
     const updateHeight = () => {
       const isMobile = window.innerWidth <= 768;
@@ -237,8 +299,54 @@ export default function App() {
     };
   }, []);
 
+  // 載入任務
   useEffect(() => {
-    localStorage.setItem('content-farm-tasks', JSON.stringify(tasks));
+    const loadTasks = async () => {
+      setIsLoadingTasks(true);
+      
+      const sheetsTasks = await fetchTasksFromSheets();
+      
+      if (sheetsTasks && sheetsTasks.length > 0) {
+        setTasks(sheetsTasks);
+        localStorage.setItem('content-farm-tasks', JSON.stringify(sheetsTasks));
+      } else {
+        try {
+          const saved = localStorage.getItem('content-farm-tasks');
+          if (saved) {
+            const parsed = JSON.parse(saved);
+            // 遷移舊資料結構
+            const migrated = parsed.map(t => {
+               if (t.step) return t;
+               let newStatus = 'todo';
+               let newStep = 1;
+               if (t.status === 'inbox') { newStatus = 'todo'; newStep = 1; }
+               else if (t.status === 'processing') { newStatus = 'in_progress'; newStep = 2; }
+               else if (t.status === 'visuals') { newStatus = 'in_progress'; newStep = 3; }
+               else if (t.status === 'review') { newStatus = 'in_progress'; newStep = 4; }
+               else if (t.status === 'published' || t.status === 'done') { newStatus = 'done'; newStep = 4; }
+               return { ...t, status: newStatus, step: newStep };
+            });
+            setTasks(migrated);
+          } else {
+            setTasks([
+              { id: 1, title: '範例：SEC 起訴 Coinbase', status: 'todo', step: 1, url: 'https://example.com', content: '這裡是一段範例的原始文字內容...', geminiReport: '', summary: '', substackLink: '', created_at: new Date().toISOString() },
+            ]);
+          }
+        } catch (e) {
+          setTasks([]);
+        }
+      }
+      
+      setIsLoadingTasks(false);
+    };
+    
+    loadTasks();
+  }, []);
+
+  useEffect(() => {
+    if (tasks.length > 0) {
+      localStorage.setItem('content-farm-tasks', JSON.stringify(tasks));
+    }
   }, [tasks]);
 
   useEffect(() => {
@@ -259,7 +367,7 @@ export default function App() {
     setFavicon();
   }, []);
 
-  const addTask = (rawContent) => {
+  const addTask = async (rawContent) => {
     if (!rawContent.trim()) return;
 
     const firstLine = rawContent.trim().split('\n')[0];
@@ -274,18 +382,31 @@ export default function App() {
       content: rawContent,
       geminiReport: '', 
       summary: '',
-      status: 'todo', // 改為 todo
-      step: 1, // 初始步驟
+      status: 'todo', 
+      step: 1, 
       created_at: new Date().toISOString(),
       imageStatus: false,
       substackLink: ''
     };
+    
     setTasks([newTask, ...tasks]);
     setIsModalOpen(false);
+    
+    await syncTaskToSheets('create', newTask);
   };
 
-  const updateTask = (id, updates) => {
-    setTasks(prevTasks => prevTasks.map(t => t.id === id ? { ...t, ...updates } : t));
+  const updateTask = async (id, updates) => {
+    setTasks(prevTasks => {
+      const updated = prevTasks.map(t => {
+        if (t.id === id) {
+          const updatedTask = { ...t, ...updates };
+          syncTaskToSheets('update', updatedTask);
+          return updatedTask;
+        }
+        return t;
+      });
+      return updated;
+    });
   };
 
   const handleNextStep = (task, nextStepData = {}) => {
@@ -293,20 +414,18 @@ export default function App() {
     let nextUpdates = { ...nextStepData };
 
     if (currentStep === 1) {
-      // Step 1 (Gemini) -> Step 2 (ChatGPT)
-      // 同時將狀態改為處理中
+      // Step 1 -> Step 2
       nextUpdates = { ...nextUpdates, step: 2, status: 'in_progress' };
     } else if (currentStep === 2) {
-      // Step 2 (ChatGPT) -> Step 3 (NotebookLM)
+      // Step 2 -> Step 3
       nextUpdates = { ...nextUpdates, step: 3 };
     } else if (currentStep === 3) {
-      // Step 3 (NotebookLM) -> Step 4 (Substack)
+      // Step 3 -> Step 4
       nextUpdates = { ...nextUpdates, step: 4 };
     }
     
     updateTask(task.id, nextUpdates);
     
-    // 自動捲動到下一步驟
     setTimeout(() => {
         const nextStepElement = document.getElementById(`step-${currentStep + 1}`);
         if (nextStepElement) {
@@ -331,12 +450,17 @@ export default function App() {
     });
   };
 
-  const confirmAction = () => {
+  const confirmAction = async () => {
     if (confirmDialog.type === 'delete') {
       setTasks(prev => prev.filter(t => t.id !== confirmDialog.id));
       if (activeTaskId === confirmDialog.id) setActiveTaskId(null);
     } else if (confirmDialog.type === 'archive') {
-      setTasks([]); 
+      const now = new Date().toISOString();
+      setTasks(prevTasks => {
+        const archived = prevTasks.map(t => ({ ...t, status: 'archived', completed_at: now }));
+        syncTaskToSheets('archive', { tasks: archived });
+        return [];
+      });
       setActiveTaskId(null);
     }
     setConfirmDialog({ isOpen: false, type: '', id: null });
@@ -350,11 +474,15 @@ export default function App() {
       window.getSelection().addRange(range);
       try {
         document.execCommand('copy');
+        
         triggerConfetti();
-        updateTask(activeTask.id, { status: 'done', step: 4 }); // 完成
+
+        updateTask(activeTask.id, { status: 'done', step: 4 }); 
+        
         setTimeout(() => {
           setActiveTaskId(null);
         }, 500);
+        
         return 'copied';
       } catch (err) {
         alert("複製失敗，請手動選取內容複製。");
@@ -364,13 +492,16 @@ export default function App() {
   };
 
   const handleChatGPTGenerate = async () => {
-    if (!apiKeys.openai) {
+    const apiKey = getOpenAIKey();
+    if (!apiKey) {
       alert("請先點擊右上角「設定」，填入 OpenAI API Key。");
+      setIsSettingsOpen(true);
       return;
     }
+    
     setIsGeneratingGPT(true);
     try {
-      const result = await callOpenAIAPI(apiKeys.openai, PROMPTS.chatgpt_role, activeTask.geminiReport);
+      const result = await callOpenAIAPI(apiKey, PROMPTS.chatgpt_role, activeTask.geminiReport);
       updateTask(activeTask.id, { summary: result });
     } catch (error) {
       alert(`發生錯誤：${error.message}`);
@@ -464,10 +595,14 @@ export default function App() {
     const isDone = activeTask.status === 'done';
 
     return (
-      <div className="fixed inset-0 bg-black/50 flex items-end sm:items-center justify-center z-50 sm:p-4 backdrop-blur-sm">
+      <div 
+        className="fixed inset-0 bg-black/50 flex items-end sm:items-center justify-center z-50 sm:p-4 backdrop-blur-sm"
+        onClick={() => setActiveTaskId(null)}
+      >
         <div 
           className="bg-[#F9F9F7] w-full max-w-4xl rounded-none sm:rounded-xl shadow-2xl overflow-hidden flex flex-col animate-in slide-in-from-bottom duration-300 overscroll-none"
           style={{ height: modalHeight, maxHeight: modalHeight }}
+          onClick={(e) => e.stopPropagation()}
         >
           
           <div className="bg-[#1A365D] text-white p-4 flex justify-between items-center flex-shrink-0">
@@ -661,8 +796,8 @@ export default function App() {
   const renderSettingsModal = () => {
     if (!isSettingsOpen) return null;
     return (
-      <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-[70] p-4 backdrop-blur-sm animate-in fade-in duration-150">
-        <div className="bg-white rounded-xl shadow-2xl p-6 max-w-md w-full">
+      <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-[70] p-4 backdrop-blur-sm animate-in fade-in duration-150" onClick={() => setIsSettingsOpen(false)}>
+        <div className="bg-white rounded-xl shadow-2xl p-6 max-w-md w-full" onClick={(e) => e.stopPropagation()}>
           <div className="flex items-center justify-between mb-6">
             <h3 className="text-xl font-bold flex items-center text-slate-800">
               <Settings className="mr-2" size={24} /> 系統設定 (API)
@@ -703,8 +838,8 @@ export default function App() {
     const isArchive = confirmDialog.type === 'archive';
 
     return (
-      <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-[60] p-4 backdrop-blur-sm animate-in fade-in duration-150">
-        <div className="bg-white rounded-xl shadow-2xl p-6 max-w-sm w-full transform scale-100 transition-all">
+      <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-[60] p-4 backdrop-blur-sm animate-in fade-in duration-150" onClick={() => setConfirmDialog({ isOpen: false, type: '', id: null })}>
+        <div className="bg-white rounded-xl shadow-2xl p-6 max-w-sm w-full transform scale-100 transition-all" onClick={(e) => e.stopPropagation()}>
           <div className="flex items-center text-amber-600 mb-4">
             <AlertTriangle size={24} className="mr-3" />
             <h3 className="text-lg font-bold">{isArchive ? '確定本週已完成？' : '確定要刪除？'}</h3>
@@ -833,8 +968,8 @@ export default function App() {
 
       {/* Add Task Modal (Simplified) */}
       {isModalOpen && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4 animate-in fade-in duration-200 backdrop-blur-sm">
-          <div className="bg-white p-5 rounded-lg shadow-xl w-full max-w-md max-h-[90vh] overflow-y-auto">
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4 animate-in fade-in duration-200 backdrop-blur-sm" onClick={() => setIsModalOpen(false)}>
+          <div className="bg-white p-5 rounded-lg shadow-xl w-full max-w-md max-h-[90vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
             <h2 className="text-lg font-bold mb-4 text-gray-800">快速新增素材</h2>
             <form onSubmit={(e) => {
               e.preventDefault();
