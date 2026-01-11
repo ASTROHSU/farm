@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Plus, Copy, Check, ArrowRight, FileText, Image as ImageIcon, Share, Trash2, ExternalLink, Settings, X, AlignLeft, Archive, AlertTriangle, ClipboardPaste, Sparkles, Loader2, Key, Upload, LayoutTemplate } from 'lucide-react';
+import { Plus, Copy, Check, ArrowRight, FileText, Image as ImageIcon, Share, Trash2, ExternalLink, Settings, X, AlignLeft, Archive, AlertTriangle, ClipboardPaste, Sparkles, Loader2, Key, LayoutTemplate } from 'lucide-react';
 
 // --- 配置與 Prompt 資料庫 ---
 const PROMPTS = {
@@ -168,7 +168,7 @@ export default function App() {
     try {
       const saved = localStorage.getItem('content-farm-tasks');
       return saved ? JSON.parse(saved) : [
-        { id: 1, title: '範例：SEC 起訴 Coinbase', status: 'inbox', url: 'https://example.com', content: '這裡是一段範例的原始文字內容...', geminiReport: '', summary: '', imageBlobUrl: null, substackLink: '', created_at: new Date().toISOString() },
+        { id: 1, title: '範例：SEC 起訴 Coinbase', status: 'inbox', url: 'https://example.com', content: '這裡是一段範例的原始文字內容...', geminiReport: '', summary: '', substackLink: '', created_at: new Date().toISOString() },
       ];
     } catch (e) {
       return [];
@@ -238,7 +238,6 @@ export default function App() {
       content: rawContent,
       geminiReport: '', 
       summary: '',
-      imageBlobUrl: null, 
       status: 'inbox',
       created_at: new Date().toISOString(),
       imageStatus: false,
@@ -279,14 +278,6 @@ export default function App() {
     setConfirmDialog({ isOpen: false, type: '', id: null });
   };
 
-  const handleImageUpload = (e) => {
-    const file = e.target.files[0];
-    if (file) {
-      const url = URL.createObjectURL(file);
-      updateTask(activeTask.id, { imageBlobUrl: url, imageStatus: true });
-    }
-  };
-
   const handleCopySubstackDraft = () => {
     if (substackPreviewRef.current) {
       const range = document.createRange();
@@ -307,7 +298,7 @@ export default function App() {
           setActiveTaskId(null);
         }, 500);
         
-        // 不需要 Alert
+        return 'copied';
       } catch (err) {
         alert("複製失敗，請手動選取內容複製。");
       }
@@ -434,6 +425,47 @@ export default function App() {
 
           <div className="flex-1 overflow-y-auto p-4 sm:p-6 space-y-6 sm:space-y-8 pb-20 sm:pb-6">
             
+            {/* 針對已處理的任務，直接顯示最終成果在最上方 */}
+            {activeTask.status === 'published' && (
+              <div className="mb-8 border-b border-gray-200 pb-8">
+                <div className="flex items-center justify-between mb-4">
+                  <h3 className="text-xl font-bold text-green-700 flex items-center">
+                    <Sparkles className="mr-2" /> 🎉 最終成果 (Draft Preview)
+                  </h3>
+                  <Button 
+                    onClick={handleCopySubstackDraft} 
+                    icon={Copy} 
+                    variant="magic" 
+                    className="text-xs py-1 px-3 h-8"
+                  >
+                    再次複製草稿
+                  </Button>
+                </div>
+                <div 
+                  ref={substackPreviewRef}
+                  className="bg-white border border-gray-200 p-6 rounded-lg shadow-sm text-gray-800 leading-relaxed font-serif"
+                >
+                  <h1 className="text-2xl font-bold mb-4 text-black border-b pb-2">
+                    {renderMarkdownText(summaryParts.title || activeTask.title)}
+                  </h1>
+                  
+                  <p className="mb-6 text-lg whitespace-pre-line">
+                    {renderMarkdownText(summaryParts.p1 || "無摘要內容")}
+                  </p>
+                  
+                  <p className="mb-6 text-lg whitespace-pre-line">
+                    {renderMarkdownText(summaryParts.p2)}
+                  </p>
+                  
+                  {activeTask.url && (
+                    <div className="text-sm text-gray-500 mt-8 pt-4 border-t">
+                      資料來源：<a href={activeTask.url} target="_blank" rel="noreferrer" className="text-blue-600 underline">原始新聞連結</a>
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
+
             <section className={`transition-all duration-300 ${activeTask.status === 'inbox' ? 'opacity-100 scale-100' : 'opacity-50 grayscale'}`}>
               <div className="flex items-center mb-3">
                 <div className={`w-7 h-7 sm:w-8 sm:h-8 rounded-full flex items-center justify-center font-bold mr-3 text-sm sm:text-base ${activeTask.status === 'inbox' ? 'bg-blue-600 text-white' : 'bg-blue-100 text-blue-800'}`}>1</div>
@@ -611,23 +643,6 @@ export default function App() {
               <Card className={`p-4 bg-white border-orange-200 bg-orange-50 transition-all ${activeTask.status === 'review' ? 'ring-2 ring-orange-400 shadow-lg' : ''}`}>
                 
                 <div className="mb-6">
-                  <label className="block text-sm font-bold text-gray-700 mb-2 flex items-center">
-                    <Upload size={16} className="mr-2"/> 上傳資訊圖表 (NotebookLM 產出)
-                  </label>
-                  <div className="flex items-center space-x-4">
-                    <label className="cursor-pointer bg-white border border-gray-300 hover:bg-gray-50 text-gray-700 px-4 py-2 rounded-md text-sm font-medium transition-colors flex items-center">
-                      <input type="file" accept="image/*" className="hidden" onChange={handleImageUpload} />
-                      <ImageIcon size={16} className="mr-2"/> 選擇圖片
-                    </label>
-                    {activeTask.imageBlobUrl ? (
-                      <span className="text-xs text-green-600 font-bold flex items-center"><Check size={14} className="mr-1"/> 圖片已載入</span>
-                    ) : (
-                      <span className="text-xs text-red-500">尚未上傳圖片</span>
-                    )}
-                  </div>
-                </div>
-
-                <div className="mb-4">
                   <div className="flex justify-between items-end mb-2">
                     <label className="text-sm font-bold text-gray-700 flex items-center">
                       <LayoutTemplate size={16} className="mr-2"/> 草稿預覽 (自動排版)
@@ -647,21 +662,6 @@ export default function App() {
                       {renderMarkdownText(summaryParts.p1 || "等待摘要生成...")}
                     </p>
                     
-                    <div className="my-8 flex justify-center">
-                      {activeTask.imageBlobUrl ? (
-                        <img 
-                          src={activeTask.imageBlobUrl} 
-                          alt="Infographic" 
-                          className="max-w-full rounded shadow-sm" 
-                          style={{ maxHeight: '500px', width: 'auto' }}
-                        />
-                      ) : (
-                        <div className="w-full h-48 bg-gray-100 border-2 border-dashed border-gray-300 rounded flex items-center justify-center text-gray-400">
-                          [此處將插入資訊圖表]
-                        </div>
-                      )}
-                    </div>
-
                     <p className="mb-6 text-lg whitespace-pre-line">
                       {renderMarkdownText(summaryParts.p2)}
                     </p>
@@ -773,7 +773,7 @@ export default function App() {
   };
 
   const columns = [
-    { id: 'inbox', title: '📥 點子庫', color: 'bg-gray-100' },
+    { id: 'inbox', title: '待處理', color: 'bg-gray-100' },
     { id: 'processing', title: '🤖 研究撰寫', color: 'bg-blue-50' },
     { id: 'visuals', title: '🎨 製圖中', color: 'bg-purple-50' },
     { id: 'review', title: '🚀 準備發布', color: 'bg-orange-50' },
