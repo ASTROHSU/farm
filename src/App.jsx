@@ -1,9 +1,8 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Plus, Copy, Check, ArrowRight, FileText, Trash2, ExternalLink, Settings, X, AlignLeft, Archive, AlertTriangle, ClipboardPaste, Sparkles, Loader2, Key, LayoutTemplate } from 'lucide-react';
+import { Plus, Copy, Check, ArrowRight, FileText, Image as ImageIcon, Share, Trash2, ExternalLink, Settings, X, AlignLeft, Archive, AlertTriangle, ClipboardPaste, Sparkles, Loader2, Key, Upload, LayoutTemplate, PlayCircle } from 'lucide-react';
 
 // --- 配置與 Prompt 資料庫 ---
 const PROMPTS = {
-  // 修改：還原為原始的研究指令
   gemini: `請你替我研究這個主題並以繁體中文製作報告，內容包含目前的發展進度是什麼、為什麼會發生這件事（為什麼會做這個決定），以及這件事會對未來產生什麼影響？還有，我也想知道網路上有哪些人對這起事件有哪些正面和反面的論點？他們說了什麼、為什麼這樣說？`,
   
   chatgpt_role: `# Role
@@ -45,12 +44,10 @@ const Badge = ({ children, color = "blue" }) => {
   );
 };
 
-// 修改 Button 組件以支援暫時性文字變化 (Copied feedback)
 const Button = ({ onClick, children, variant = "primary", className = "", icon: Icon, disabled = false, loading = false }) => {
   const [feedback, setFeedback] = useState(null);
   
   const handleClick = async (e) => {
-    // 攔截 onClick 來處理複製回饋，如果 onClick 回傳 "copied"，則顯示回饋
     const result = await onClick(e);
     if (result === 'copied') {
       setFeedback('已複製！');
@@ -77,111 +74,6 @@ const Button = ({ onClick, children, variant = "primary", className = "", icon: 
 };
 
 // --- API Service ---
-
-// Gemini API 暫時停用，保留函式結構但移除呼叫
-// const callGeminiAPI = async (apiKey, prompt, content) => { ... }
-
-// --- Google Sheets API Service ---
-
-const GOOGLE_SHEETS_API_URL = import.meta.env.VITE_GOOGLE_SHEETS_API_URL || '';
-
-// 從 Google Sheets 讀取所有任務
-const fetchTasksFromSheets = async () => {
-  if (!GOOGLE_SHEETS_API_URL) {
-    console.warn('⚠️ Google Sheets API URL 未設定，將使用本地儲存');
-    console.log('💡 提示：請在 .env.local 或 Vercel 環境變數中設定 VITE_GOOGLE_SHEETS_API_URL');
-    return null;
-  }
-  
-  console.log('📡 正在從 Google Sheets 讀取資料...', GOOGLE_SHEETS_API_URL);
-  
-  try {
-    const url = `${GOOGLE_SHEETS_API_URL}?t=${Date.now()}`;
-    console.log('🔗 請求 URL:', url);
-    
-    const response = await fetch(url);
-    console.log('📥 回應狀態:', response.status, response.statusText);
-    
-    if (!response.ok) {
-      throw new Error(`HTTP ${response.status}: ${response.statusText}`);
-    }
-    
-    const data = await response.json();
-    console.log('✅ 讀取成功，資料:', data);
-    
-    if (data.error) {
-      console.error('❌ Google Sheets 錯誤:', data.error);
-      return null;
-    }
-    
-    const tasks = Array.isArray(data) ? data.filter(task => task.status !== 'archived') : null;
-    console.log(`📊 過濾後任務數量: ${tasks?.length || 0}`);
-    return tasks;
-  } catch (error) {
-    console.error('❌ 讀取 Google Sheets 失敗:', error);
-    console.error('錯誤詳情:', {
-      message: error.message,
-      stack: error.stack,
-      url: GOOGLE_SHEETS_API_URL
-    });
-    return null;
-  }
-};
-
-// 同步任務到 Google Sheets
-const syncTaskToSheets = async (action, task) => {
-  if (!GOOGLE_SHEETS_API_URL) {
-    console.warn('⚠️ Google Sheets API URL 未設定，跳過同步');
-    console.log('💡 提示：請在 .env.local 或 Vercel 環境變數中設定 VITE_GOOGLE_SHEETS_API_URL');
-    return { success: false, error: 'API URL 未設定' };
-  }
-  
-  console.log(`📤 同步到 Google Sheets [${action}]:`, task);
-  console.log('🔗 API URL:', GOOGLE_SHEETS_API_URL);
-  
-  try {
-    const payload = { action, task };
-    console.log('📦 請求資料:', JSON.stringify(payload, null, 2));
-    
-    const response = await fetch(GOOGLE_SHEETS_API_URL, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify(payload),
-    });
-    
-    console.log('📥 回應狀態:', response.status, response.statusText);
-    
-    if (!response.ok) {
-      const errorText = await response.text();
-      console.error('❌ HTTP 錯誤:', errorText);
-      throw new Error(`HTTP ${response.status}: ${errorText}`);
-    }
-    
-    const result = await response.json();
-    console.log('✅ 同步結果:', result);
-    
-    if (result.error) {
-      console.error('❌ Google Sheets 錯誤:', result.error);
-      return { success: false, error: result.error };
-    }
-    
-    console.log('✅ 同步成功！');
-    return { success: true, result };
-  } catch (error) {
-    console.error('❌ 同步到 Google Sheets 失敗:', error);
-    console.error('錯誤詳情:', {
-      message: error.message,
-      stack: error.stack,
-      action,
-      taskId: task?.id,
-      url: GOOGLE_SHEETS_API_URL
-    });
-    // 失敗時不影響使用者體驗，只記錄錯誤
-    return { success: false, error: error.message };
-  }
-};
 
 const callOpenAIAPI = async (apiKey, systemPrompt, userContent) => {
   const userMessage = `請根據以下「Gemini 研究報告」內容進行撰寫：\n\n「\n${userContent}\n」`;
@@ -266,27 +158,37 @@ const triggerConfetti = () => {
 // --- 主應用程式 ---
 
 export default function App() {
-  const [tasks, setTasks] = useState([]);
-  const [isLoadingTasks, setIsLoadingTasks] = useState(true);
+  // 任務資料結構現在包含 step (1-4)
+  const [tasks, setTasks] = useState(() => {
+    try {
+      const saved = localStorage.getItem('content-farm-tasks');
+      const parsed = saved ? JSON.parse(saved) : [];
+      // 簡單的資料遷移邏輯，確保舊資料有 step 和新的 status
+      return parsed.map(t => {
+        if (t.step) return t; // 已經有 step，無需遷移
+        // 舊 status 映射
+        let newStatus = 'todo';
+        let newStep = 1;
+        if (t.status === 'inbox') { newStatus = 'todo'; newStep = 1; }
+        else if (t.status === 'processing') { newStatus = 'in_progress'; newStep = 2; }
+        else if (t.status === 'visuals') { newStatus = 'in_progress'; newStep = 3; }
+        else if (t.status === 'review') { newStatus = 'in_progress'; newStep = 4; }
+        else if (t.status === 'published' || t.status === 'done') { newStatus = 'done'; newStep = 4; }
+        return { ...t, status: newStatus, step: newStep };
+      });
+    } catch (e) {
+      return [];
+    }
+  });
 
   const [apiKeys, setApiKeys] = useState(() => {
     try {
       const saved = localStorage.getItem('content-farm-api-keys');
-      if (saved) {
-        return JSON.parse(saved);
-      }
-      // 如果 localStorage 中沒有，嘗試從環境變數讀取作為預設值（不會暴露在 GitHub）
-      const envKey = import.meta.env.VITE_OPENAI_API_KEY;
-      return { openai: envKey || '' };
+      return saved ? JSON.parse(saved) : { openai: '' };
     } catch (e) {
       return { openai: '' };
     }
   });
-
-  // 取得 API Key：優先使用使用者設定的，如果沒有則使用環境變數
-  const getOpenAIKey = () => {
-    return apiKeys.openai || import.meta.env.VITE_OPENAI_API_KEY || '';
-  };
 
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
@@ -294,19 +196,31 @@ export default function App() {
   const [confirmDialog, setConfirmDialog] = useState({ isOpen: false, type: '', id: null });
   
   const [isGeneratingGPT, setIsGeneratingGPT] = useState(false);
-  const [syncStatus, setSyncStatus] = useState({ lastSync: null, error: null, testing: false });
 
   const substackPreviewRef = useRef(null);
+  const wizardScrollRef = useRef(null);
   const [modalHeight, setModalHeight] = useState('90vh');
 
   const activeTask = tasks.find(t => t.id === activeTaskId);
 
-  // 動態計算視窗高度以支援所有瀏覽器（包括 Brave）
+  // 當打開卡片時，自動捲動到當前步驟
+  useEffect(() => {
+    if (activeTask && wizardScrollRef.current) {
+      // 簡單的延遲以確保 DOM 已渲染
+      setTimeout(() => {
+        const stepId = `step-${activeTask.step}`;
+        const element = document.getElementById(stepId);
+        if (element) {
+          element.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        }
+      }, 100);
+    }
+  }, [activeTaskId]); // 依賴 activeTaskId，每次打開新任務時觸發
+
   useEffect(() => {
     const updateHeight = () => {
       const isMobile = window.innerWidth <= 768;
       if (isMobile) {
-        // 手機版：使用實際視窗高度，確保不會破版
         setModalHeight(`${window.innerHeight}px`);
       } else {
         setModalHeight('90vh');
@@ -323,67 +237,16 @@ export default function App() {
     };
   }, []);
 
-  // 初始化時，如果環境變數有 API Key 且 localStorage 中沒有，則自動填入
   useEffect(() => {
-    const envKey = import.meta.env.VITE_OPENAI_API_KEY;
-    if (envKey && !apiKeys.openai) {
-      setApiKeys({ openai: envKey });
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []); // 只在首次載入時執行
-
-  // 載入任務：優先從 Google Sheets，如果失敗則使用本地儲存
-  useEffect(() => {
-    const loadTasks = async () => {
-      setIsLoadingTasks(true);
-      
-      // 嘗試從 Google Sheets 讀取
-      const sheetsTasks = await fetchTasksFromSheets();
-      
-      if (sheetsTasks && sheetsTasks.length > 0) {
-        setTasks(sheetsTasks);
-        localStorage.setItem('content-farm-tasks', JSON.stringify(sheetsTasks));
-      } else {
-        // 如果 Google Sheets 不可用，使用本地儲存
-        try {
-          const saved = localStorage.getItem('content-farm-tasks');
-          if (saved) {
-            const parsed = JSON.parse(saved);
-            setTasks(parsed);
-          } else {
-            // 預設範例任務（僅在完全沒有資料時）
-            setTasks([
-              { id: 1, title: '範例：SEC 起訴 Coinbase', status: 'inbox', url: 'https://example.com', content: '這裡是一段範例的原始文字內容...', geminiReport: '', summary: '', substackLink: '', created_at: new Date().toISOString() },
-            ]);
-          }
-        } catch (e) {
-          setTasks([]);
-        }
-      }
-      
-      setIsLoadingTasks(false);
-    };
-    
-    loadTasks();
-  }, []);
-
-  // 同步任務到本地儲存和 Google Sheets
-  useEffect(() => {
-    if (tasks.length > 0) {
-      localStorage.setItem('content-farm-tasks', JSON.stringify(tasks));
-    }
+    localStorage.setItem('content-farm-tasks', JSON.stringify(tasks));
   }, [tasks]);
 
   useEffect(() => {
     localStorage.setItem('content-farm-api-keys', JSON.stringify(apiKeys));
   }, [apiKeys]);
 
-  // 新增：設定網頁標題與 Favicon
   useEffect(() => {
-    // 1. 設定標題
     document.title = "內容農場｜週報製作 SOP";
-
-    // 2. 動態設定 Favicon (使用 Robot Emoji)
     const setFavicon = () => {
       let link = document.querySelector("link[rel~='icon']");
       if (!link) {
@@ -391,13 +254,12 @@ export default function App() {
         link.rel = 'icon';
         document.getElementsByTagName('head')[0].appendChild(link);
       }
-      // 使用 SVG data URI 作為 favicon，兼容性好且不需要外部圖片資源
       link.href = `data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>🤖</text></svg>`;
     };
     setFavicon();
   }, []);
 
-  const addTask = async (rawContent) => {
+  const addTask = (rawContent) => {
     if (!rawContent.trim()) return;
 
     const firstLine = rawContent.trim().split('\n')[0];
@@ -412,33 +274,45 @@ export default function App() {
       content: rawContent,
       geminiReport: '', 
       summary: '',
-      status: 'inbox',
+      status: 'todo', // 改為 todo
+      step: 1, // 初始步驟
       created_at: new Date().toISOString(),
       imageStatus: false,
       substackLink: ''
     };
-    
-    // 先更新本地狀態
     setTasks([newTask, ...tasks]);
     setIsModalOpen(false);
-    
-    // 同步到 Google Sheets
-    await syncTaskToSheets('create', newTask);
   };
 
-  const updateTask = async (id, updates) => {
-    setTasks(prevTasks => {
-      const updated = prevTasks.map(t => {
-        if (t.id === id) {
-          const updatedTask = { ...t, ...updates };
-          // 同步到 Google Sheets
-          syncTaskToSheets('update', updatedTask);
-          return updatedTask;
+  const updateTask = (id, updates) => {
+    setTasks(prevTasks => prevTasks.map(t => t.id === id ? { ...t, ...updates } : t));
+  };
+
+  const handleNextStep = (task, nextStepData = {}) => {
+    const currentStep = task.step;
+    let nextUpdates = { ...nextStepData };
+
+    if (currentStep === 1) {
+      // Step 1 (Gemini) -> Step 2 (ChatGPT)
+      // 同時將狀態改為處理中
+      nextUpdates = { ...nextUpdates, step: 2, status: 'in_progress' };
+    } else if (currentStep === 2) {
+      // Step 2 (ChatGPT) -> Step 3 (NotebookLM)
+      nextUpdates = { ...nextUpdates, step: 3 };
+    } else if (currentStep === 3) {
+      // Step 3 (NotebookLM) -> Step 4 (Substack)
+      nextUpdates = { ...nextUpdates, step: 4 };
+    }
+    
+    updateTask(task.id, nextUpdates);
+    
+    // 自動捲動到下一步驟
+    setTimeout(() => {
+        const nextStepElement = document.getElementById(`step-${currentStep + 1}`);
+        if (nextStepElement) {
+            nextStepElement.scrollIntoView({ behavior: 'smooth', block: 'start' });
         }
-        return t;
-      });
-      return updated;
-    });
+    }, 100);
   };
 
   const handleDeleteRequest = (id) => {
@@ -457,19 +331,12 @@ export default function App() {
     });
   };
 
-  const confirmAction = async () => {
+  const confirmAction = () => {
     if (confirmDialog.type === 'delete') {
       setTasks(prev => prev.filter(t => t.id !== confirmDialog.id));
       if (activeTaskId === confirmDialog.id) setActiveTaskId(null);
     } else if (confirmDialog.type === 'archive') {
-      // 標記所有任務為 archived 並同步到 Google Sheets
-      const now = new Date().toISOString();
-      setTasks(prevTasks => {
-        const archived = prevTasks.map(t => ({ ...t, status: 'archived', completed_at: now }));
-        // 同步到 Google Sheets
-        syncTaskToSheets('archive', { tasks: archived });
-        return [];
-      });
+      setTasks([]); 
       setActiveTaskId(null);
     }
     setConfirmDialog({ isOpen: false, type: '', id: null });
@@ -483,18 +350,11 @@ export default function App() {
       window.getSelection().addRange(range);
       try {
         document.execCommand('copy');
-        
-        // 觸發彩帶特效
         triggerConfetti();
-
-        // 標記完成並關閉視窗 (狀態改為 'published'，對應 '已處理')
-        updateTask(activeTask.id, { status: 'published' });
-        
-        // 延遲一點點再關閉，讓使用者看到按鈕反應
+        updateTask(activeTask.id, { status: 'done', step: 4 }); // 完成
         setTimeout(() => {
           setActiveTaskId(null);
         }, 500);
-        
         return 'copied';
       } catch (err) {
         alert("複製失敗，請手動選取內容複製。");
@@ -504,16 +364,13 @@ export default function App() {
   };
 
   const handleChatGPTGenerate = async () => {
-    const apiKey = getOpenAIKey();
-    if (!apiKey) {
+    if (!apiKeys.openai) {
       alert("請先點擊右上角「設定」，填入 OpenAI API Key。");
-      setIsSettingsOpen(true);
       return;
     }
-    
     setIsGeneratingGPT(true);
     try {
-      const result = await callOpenAIAPI(apiKey, PROMPTS.chatgpt_role, activeTask.geminiReport);
+      const result = await callOpenAIAPI(apiKeys.openai, PROMPTS.chatgpt_role, activeTask.geminiReport);
       updateTask(activeTask.id, { summary: result });
     } catch (error) {
       alert(`發生錯誤：${error.message}`);
@@ -536,7 +393,7 @@ export default function App() {
 
   const renderMarkdownText = (text) => {
     if (!text) return null;
-    const parts = text.split(/(\*\*.*?\*\*)/g); // Split by bold markers
+    const parts = text.split(/(\*\*.*?\*\*)/g); 
     return parts.map((part, index) => {
       if (part.startsWith('**') && part.endsWith('**')) {
         return <strong key={index}>{part.slice(2, -2)}</strong>;
@@ -581,32 +438,7 @@ export default function App() {
       if (content) fullText += `\n\n\n${content}`;
       const result = secureCopy(fullText);
       if (result === 'copied') {
-        // 檢測是否為移動設備（iOS/Android）
-        const isMobile = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
-        const isIOS = /iPhone|iPad|iPod/i.test(navigator.userAgent);
-        const isSafari = /Safari/i.test(navigator.userAgent) && !/Chrome/i.test(navigator.userAgent);
-        
-        if (isMobile && isIOS && isSafari) {
-          // iOS Safari: 使用 Universal Link，如果安裝了 App 會自動打開，否則打開網頁版
-          // 使用 window.location 而不是 window.open，這樣 Universal Link 才能正常工作
-          window.location.href = 'https://gemini.google.com/app';
-        } else if (isMobile) {
-          // 其他移動設備：先嘗試打開 App，如果失敗則打開網頁
-          // 使用隱藏的 iframe 嘗試打開 App（不會影響當前頁面）
-          const iframe = document.createElement('iframe');
-          iframe.style.display = 'none';
-          iframe.src = 'https://gemini.google.com/app';
-          document.body.appendChild(iframe);
-          
-          // 1.5 秒後如果還在當前頁面，則打開網頁版
-          setTimeout(() => {
-            document.body.removeChild(iframe);
-            window.open('https://gemini.google.com/app', '_blank');
-          }, 1500);
-        } else {
-          // 桌面版：直接打開網頁
-          window.open('https://gemini.google.com/app', '_blank');
-        }
+        window.open('https://gemini.google.com/app', '_blank');
       }
       return result;
     };
@@ -628,16 +460,14 @@ export default function App() {
     };
 
     const summaryParts = parseSummary(activeTask.summary);
+    const currentStep = activeTask.step || 1;
+    const isDone = activeTask.status === 'done';
 
     return (
       <div className="fixed inset-0 bg-black/50 flex items-end sm:items-center justify-center z-50 sm:p-4 backdrop-blur-sm">
-        {/* RWD Optimization: 使用動態計算的高度以支援所有瀏覽器（包括 Brave） */}
         <div 
           className="bg-[#F9F9F7] w-full max-w-4xl rounded-none sm:rounded-xl shadow-2xl overflow-hidden flex flex-col animate-in slide-in-from-bottom duration-300 overscroll-none"
-          style={{
-            height: modalHeight,
-            maxHeight: modalHeight
-          }}
+          style={{ height: modalHeight, maxHeight: modalHeight }}
         >
           
           <div className="bg-[#1A365D] text-white p-4 flex justify-between items-center flex-shrink-0">
@@ -645,8 +475,7 @@ export default function App() {
               <h2 className="text-lg sm:text-xl font-bold truncate">{activeTask.title}</h2>
               <div className="flex items-center text-blue-200 text-xs sm:text-sm mt-1 space-x-3">
                 <span className="flex items-center truncate opacity-70">
-                  <AlignLeft size={12} className="mr-1 flex-shrink-0" />
-                  <span className="truncate">素材已載入</span>
+                   {isDone ? '✅ 任務已完成' : `目前進度：第 ${currentStep} / 4 步`}
                 </span>
               </div>
             </div>
@@ -655,45 +484,26 @@ export default function App() {
             </button>
           </div>
 
-          <div className="flex-1 overflow-y-auto p-4 sm:p-6 space-y-6 sm:space-y-8 pb-20 sm:pb-6">
+          <div ref={wizardScrollRef} className="flex-1 overflow-y-auto p-4 sm:p-6 space-y-6 sm:space-y-8 pb-20 sm:pb-6">
             
-            {/* 針對已處理的任務，直接顯示最終成果在最上方 */}
-            {activeTask.status === 'published' && (
+            {/* 已完成的任務顯示預覽 */}
+            {isDone && (
               <div className="mb-8 border-b border-gray-200 pb-8">
                 <div className="flex items-center justify-between mb-4">
                   <h3 className="text-xl font-bold text-green-700 flex items-center">
                     <Sparkles className="mr-2" /> 🎉 最終成果 (Draft Preview)
                   </h3>
-                  <Button 
-                    onClick={handleCopySubstackDraft} 
-                    icon={Copy} 
-                    variant="magic" 
-                    className="text-xs py-1 px-3 h-8"
-                  >
+                  <Button onClick={handleCopySubstackDraft} icon={Copy} variant="magic" className="text-xs py-1 px-3 h-8">
                     再次複製草稿
                   </Button>
                 </div>
-                <div 
-                  ref={substackPreviewRef}
-                  className="bg-white border border-gray-200 p-6 rounded-lg shadow-sm text-gray-800 leading-relaxed font-serif"
-                >
-                  <h1 className="text-2xl font-bold mb-4 text-black border-b pb-2">
-                    {renderMarkdownText(summaryParts.title || activeTask.title)}
-                  </h1>
-                  
-                  <p className="mb-6 text-lg whitespace-pre-line">
-                    {renderMarkdownText(summaryParts.p1 || "無摘要內容")}
-                  </p>
-                  
-                  {/* Image Placeholder */}
+                <div ref={substackPreviewRef} className="bg-white border border-gray-200 p-6 rounded-lg shadow-sm text-gray-800 leading-relaxed font-serif">
+                  <h1 className="text-2xl font-bold mb-4 text-black border-b pb-2">{renderMarkdownText(summaryParts.title || activeTask.title)}</h1>
+                  <p className="mb-6 text-lg whitespace-pre-line">{renderMarkdownText(summaryParts.p1 || "無摘要內容")}</p>
                   <div className="my-8 p-4 bg-gray-50 border-2 border-dashed border-gray-300 rounded-lg text-center">
                     <span className="text-gray-400 font-mono">[此處將插入資訊圖表]</span>
                   </div>
-
-                  <p className="mb-6 text-lg whitespace-pre-line">
-                    {renderMarkdownText(summaryParts.p2)}
-                  </p>
-                  
+                  <p className="mb-6 text-lg whitespace-pre-line">{renderMarkdownText(summaryParts.p2)}</p>
                   {activeTask.url && (
                     <div className="text-sm text-gray-500 mt-8 pt-4 border-t">
                       資料來源：<a href={activeTask.url} target="_blank" rel="noreferrer" className="text-blue-600 underline">原始新聞連結</a>
@@ -703,246 +513,150 @@ export default function App() {
               </div>
             )}
 
-            <section className={`transition-all duration-300 ${activeTask.status === 'inbox' ? 'opacity-100 scale-100' : 'opacity-50 grayscale'}`}>
+            {/* Step 1: Gemini */}
+            <div id="step-1" className={`transition-all duration-300 ${!isDone && currentStep === 1 ? 'opacity-100 scale-100' : 'opacity-50 grayscale'}`}>
               <div className="flex items-center mb-3">
-                <div className={`w-7 h-7 sm:w-8 sm:h-8 rounded-full flex items-center justify-center font-bold mr-3 text-sm sm:text-base ${activeTask.status === 'inbox' ? 'bg-blue-600 text-white' : 'bg-blue-100 text-blue-800'}`}>1</div>
+                <div className={`w-7 h-7 sm:w-8 sm:h-8 rounded-full flex items-center justify-center font-bold mr-3 text-sm sm:text-base ${!isDone && currentStep === 1 ? 'bg-blue-600 text-white' : 'bg-blue-100 text-blue-800'}`}>1</div>
                 <h3 className="text-base sm:text-lg font-bold text-gray-800">Gemini 深度研究</h3>
               </div>
-              <Card className={`p-4 bg-white transition-all ${activeTask.status === 'inbox' ? 'ring-2 ring-blue-500 shadow-lg' : ''}`}>
-                <p className="text-sm text-gray-500 mb-2">選項 A：手動複製指令與素材（前往 Gemini 網頁）</p>
-                <div className="mb-3 p-3 border-l-4 border-blue-200 bg-slate-50 text-xs text-gray-600">
-                  <div className="font-bold mb-1 text-slate-500">素材預覽：</div>
-                  <div className="line-clamp-3 italic text-slate-700">
-                    {activeTask.content}
-                  </div>
-                </div>
-
-                <div className="grid grid-cols-1 gap-3 mb-4">
-                  <Button onClick={() => copyGeminiPrompt(PROMPTS.gemini, activeTask.content)} icon={Copy} variant="secondary" className="w-full">
-                    複製指令並開啟 Gemini
-                  </Button>
-                  
-                  {/* AI 自動產生按鈕已隱藏 */}
-                </div>
+              <Card className={`p-4 bg-white transition-all ${!isDone && currentStep === 1 ? 'ring-2 ring-blue-500 shadow-lg' : ''}`}>
+                {!isDone && currentStep === 1 && (
+                    <>
+                    <p className="text-sm text-gray-500 mb-2">手動複製指令與素材（前往 Gemini 網頁）</p>
+                    <div className="mb-3 p-3 border-l-4 border-blue-200 bg-slate-50 text-xs text-gray-600">
+                    <div className="font-bold mb-1 text-slate-500">素材預覽：</div>
+                    <div className="line-clamp-3 italic text-slate-700">{activeTask.content}</div>
+                    </div>
+                    <div className="grid grid-cols-1 gap-3 mb-4">
+                    <Button onClick={() => copyGeminiPrompt(PROMPTS.gemini, activeTask.content)} icon={Copy} variant="secondary" className="w-full">
+                        複製指令並開啟 Gemini
+                    </Button>
+                    </div>
+                    </>
+                )}
 
                 {activeTask.geminiReport && (
                   <div className="mt-4 p-3 bg-green-50 border border-green-200 rounded-lg animate-in fade-in duration-300">
                     <div className="flex items-center justify-between mb-2">
-                      <div className="flex items-center text-sm font-bold text-green-800">
-                        <Check size={16} className="mr-1" /> 報告已填入
-                      </div>
-                      <Button 
-                        variant="ghost" 
-                        onClick={() => copyToClipboard(activeTask.geminiReport)}
-                        className="h-8 text-xs bg-white border border-green-200 text-green-700 hover:bg-green-100"
-                      >
+                      <div className="flex items-center text-sm font-bold text-green-800"><Check size={16} className="mr-1" /> 報告已填入</div>
+                      <Button variant="ghost" onClick={() => copyToClipboard(activeTask.geminiReport)} className="h-8 text-xs bg-white border border-green-200 text-green-700 hover:bg-green-100">
                         <Copy size={12} className="mr-1"/> 複製內容
                       </Button>
                     </div>
-                    <div className="text-xs text-gray-600 bg-white p-2 rounded border border-green-100 h-24 overflow-y-auto">
-                      {activeTask.geminiReport}
-                    </div>
+                    <div className="text-xs text-gray-600 bg-white p-2 rounded border border-green-100 h-24 overflow-y-auto">{activeTask.geminiReport}</div>
                   </div>
                 )}
                 
-                {activeTask.status === 'inbox' && (
+                {!isDone && currentStep === 1 && (
                   <div className="mt-4 flex justify-end">
-                    <Button onClick={() => updateTask(activeTask.id, { status: 'processing' })} icon={ArrowRight}>
-                      下一步：ChatGPT 文案
-                    </Button>
+                    <Button onClick={() => handleNextStep(activeTask)} icon={ArrowRight}>下一步：ChatGPT 文案</Button>
                   </div>
                 )}
               </Card>
-            </section>
+            </div>
 
-            <section className={`transition-all duration-300 ${activeTask.status === 'processing' ? 'opacity-100 scale-100' : (activeTask.status === 'inbox' ? 'opacity-30 pointer-events-none' : 'opacity-50 grayscale')}`}>
+            {/* Step 2: ChatGPT */}
+            <div id="step-2" className={`transition-all duration-300 ${!isDone && currentStep === 2 ? 'opacity-100 scale-100' : 'opacity-50 grayscale'}`}>
               <div className="flex items-center mb-3">
-                <div className={`w-7 h-7 sm:w-8 sm:h-8 rounded-full flex items-center justify-center font-bold mr-3 text-sm sm:text-base ${activeTask.status === 'processing' ? 'bg-purple-600 text-white' : 'bg-purple-100 text-purple-800'}`}>2</div>
+                <div className={`w-7 h-7 sm:w-8 sm:h-8 rounded-full flex items-center justify-center font-bold mr-3 text-sm sm:text-base ${!isDone && currentStep === 2 ? 'bg-purple-600 text-white' : 'bg-purple-100 text-purple-800'}`}>2</div>
                 <h3 className="text-base sm:text-lg font-bold text-gray-800">ChatGPT 文案</h3>
               </div>
-              <Card className={`p-4 bg-white transition-all ${activeTask.status === 'processing' ? 'ring-2 ring-purple-500 shadow-lg' : ''}`}>
-                
-                <div className="mb-6 bg-slate-50 p-4 rounded-lg border border-slate-200">
-                  <div className="flex items-center mb-2 text-purple-800 font-bold text-sm">
-                    <ClipboardPaste size={16} className="mr-2" />
-                    第一步：Gemini 研究報告 (手動貼上)
-                  </div>
-                  <textarea 
-                    className="w-full border rounded p-3 text-base sm:text-sm h-32 focus:ring-2 focus:ring-purple-500 outline-none" 
-                    placeholder="請在此貼上您從 Gemini 獲得的研究報告..."
-                    value={activeTask.geminiReport || ''}
-                    onChange={(e) => updateTask(activeTask.id, { geminiReport: e.target.value })}
-                  />
-                  <div className="mt-3 grid grid-cols-1 sm:grid-cols-2 gap-3">
-                     <Button 
-                       onClick={() => copyChatGPTPrompt(PROMPTS.chatgpt_role, activeTask.geminiReport)} 
-                       icon={Copy} 
-                       variant="secondary" 
-                       className="w-full border-purple-200 text-purple-700 hover:bg-purple-50"
-                       disabled={!activeTask.geminiReport}
-                     >
-                      手動複製指令
-                    </Button>
-                    <Button 
-                      onClick={handleChatGPTGenerate} 
-                      icon={Sparkles} 
-                      variant="magic" 
-                      className="w-full"
-                      loading={isGeneratingGPT}
-                      disabled={!activeTask.geminiReport}
-                    >
-                      AI 自動撰寫文案
-                    </Button>
-                  </div>
-                </div>
+              <Card className={`p-4 bg-white transition-all ${!isDone && currentStep === 2 ? 'ring-2 ring-purple-500 shadow-lg' : ''}`}>
+                {!isDone && currentStep === 2 && (
+                    <>
+                    <div className="mb-6 bg-slate-50 p-4 rounded-lg border border-slate-200">
+                    <div className="flex items-center mb-2 text-purple-800 font-bold text-sm"><ClipboardPaste size={16} className="mr-2" /> 第一步：Gemini 研究報告 (手動貼上)</div>
+                    <textarea className="w-full border rounded p-3 text-base sm:text-sm h-32 focus:ring-2 focus:ring-purple-500 outline-none" placeholder="請在此貼上您從 Gemini 獲得的研究報告..." value={activeTask.geminiReport || ''} onChange={(e) => updateTask(activeTask.id, { geminiReport: e.target.value })} />
+                    <div className="mt-3 grid grid-cols-1 sm:grid-cols-2 gap-3">
+                        <Button onClick={() => copyChatGPTPrompt(PROMPTS.chatgpt_role, activeTask.geminiReport)} icon={Copy} variant="secondary" className="w-full border-purple-200 text-purple-700 hover:bg-purple-50" disabled={!activeTask.geminiReport}>手動複製指令</Button>
+                        <Button onClick={handleChatGPTGenerate} icon={Sparkles} variant="magic" className="w-full" loading={isGeneratingGPT} disabled={!activeTask.geminiReport}>AI 自動撰寫文案</Button>
+                    </div>
+                    </div>
+                    <div className="border-t pt-4">
+                    <p className="text-sm text-gray-500 mb-2 font-bold">第三步：最終摘要 (AI 自動填入或手動貼上)</p>
+                    <textarea className="w-full border rounded p-3 text-base sm:text-sm h-32 focus:ring-2 focus:ring-purple-500 outline-none resize-none" placeholder="最終產出的標題與摘要會顯示在這裡..." value={activeTask.summary} onChange={(e) => updateTask(activeTask.id, { summary: e.target.value })} />
+                    </div>
+                    </>
+                )}
 
-                <div className="border-t pt-4">
-                  <p className="text-sm text-gray-500 mb-2 font-bold">第三步：最終摘要 (AI 自動填入或手動貼上)</p>
-                  <textarea 
-                    className="w-full border rounded p-3 text-base sm:text-sm h-32 focus:ring-2 focus:ring-purple-500 outline-none resize-none" 
-                    placeholder="最終產出的標題與摘要會顯示在這裡..."
-                    value={activeTask.summary}
-                    onChange={(e) => updateTask(activeTask.id, { summary: e.target.value })}
-                  />
-                </div>
-
-                 {activeTask.status === 'processing' && (
+                 {!isDone && currentStep === 2 && (
                   <div className="mt-4 flex justify-end">
-                    <Button 
-                      onClick={() => updateTask(activeTask.id, { status: 'visuals' })} 
-                      icon={ArrowRight}
-                      disabled={!activeTask.summary}
-                    >
-                      下一步：製作圖表
-                    </Button>
+                    <Button onClick={() => handleNextStep(activeTask)} icon={ArrowRight} disabled={!activeTask.summary}>下一步：製作圖表</Button>
                   </div>
                 )}
+                {/* 顯示摘要內容（如果是唯讀狀態） */}
+                {(isDone || currentStep > 2) && activeTask.summary && (
+                    <div className="text-xs text-gray-600 bg-white p-2 rounded border border-purple-100 h-24 overflow-y-auto">{activeTask.summary}</div>
+                )}
               </Card>
-            </section>
+            </div>
 
-            <section className={`transition-all duration-300 ${activeTask.status === 'visuals' ? 'opacity-100 scale-100' : (['inbox', 'processing'].includes(activeTask.status) ? 'opacity-30 pointer-events-none' : 'opacity-50 grayscale')}`}>
+            {/* Step 3: NotebookLM */}
+            <div id="step-3" className={`transition-all duration-300 ${!isDone && currentStep === 3 ? 'opacity-100 scale-100' : 'opacity-50 grayscale'}`}>
               <div className="flex items-center mb-3">
-                <div className={`w-7 h-7 sm:w-8 sm:h-8 rounded-full flex items-center justify-center font-bold mr-3 text-sm sm:text-base ${activeTask.status === 'visuals' ? 'bg-green-600 text-white' : 'bg-green-100 text-green-800'}`}>3</div>
+                <div className={`w-7 h-7 sm:w-8 sm:h-8 rounded-full flex items-center justify-center font-bold mr-3 text-sm sm:text-base ${!isDone && currentStep === 3 ? 'bg-green-600 text-white' : 'bg-green-100 text-green-800'}`}>3</div>
                 <h3 className="text-base sm:text-lg font-bold text-gray-800">資訊圖表</h3>
               </div>
-              <Card className={`p-4 bg-white transition-all ${activeTask.status === 'visuals' ? 'ring-2 ring-green-500 shadow-lg' : ''}`}>
-                <div className="mb-4 space-y-3">
-                  <div className="flex items-center text-sm text-amber-600 bg-amber-50 p-2 rounded">
-                    <AlertTriangle size={14} className="mr-2" />
-                    注意：NotebookLM 與製圖目前無法自動化，請手動操作。
-                  </div>
-                  <p className="text-sm text-gray-500 font-bold">1. 準備製圖素材 (Gemini 報告)：</p>
-                  <Button 
-                    onClick={() => copyToClipboard(activeTask.geminiReport || '無報告內容', 'https://notebooklm.google.com/')} 
-                    icon={Copy} 
-                    variant="secondary" 
-                    className="w-full border-green-200 text-green-700 hover:bg-green-50"
-                    disabled={!activeTask.geminiReport}
-                  >
-                    複製報告並開啟 NotebookLM
-                  </Button>
-                  
-                  <p className="text-sm text-gray-500 font-bold pt-2">2. 設定 NotebookLM 與複製風格：</p>
-                  <div className="bg-slate-50 p-2 text-xs text-slate-600 rounded mb-2">
-                    請選擇：<span className="font-bold text-slate-800">資訊圖表 {'->'} 精簡 {'->'} 橫式</span>
-                  </div>
-                  <Button onClick={() => copyToClipboard(PROMPTS.notebooklm_style)} icon={Copy} variant="secondary" className="w-full">
-                    複製風格指令 (Style Guide)
-                  </Button>
-                </div>
+              <Card className={`p-4 bg-white transition-all ${!isDone && currentStep === 3 ? 'ring-2 ring-green-500 shadow-lg' : ''}`}>
+                {!isDone && currentStep === 3 && (
+                    <div className="mb-4 space-y-3">
+                    <div className="flex items-center text-sm text-amber-600 bg-amber-50 p-2 rounded"><AlertTriangle size={14} className="mr-2" /> 注意：NotebookLM 與製圖目前無法自動化，請手動操作。</div>
+                    <p className="text-sm text-gray-500 font-bold">1. 準備製圖素材 (Gemini 報告)：</p>
+                    <Button onClick={() => copyToClipboard(activeTask.geminiReport || '無報告內容', 'https://notebooklm.google.com/')} icon={Copy} variant="secondary" className="w-full border-green-200 text-green-700 hover:bg-green-50" disabled={!activeTask.geminiReport}>複製報告並開啟 NotebookLM</Button>
+                    <p className="text-sm text-gray-500 font-bold pt-2">2. 設定 NotebookLM 與複製風格：</p>
+                    <div className="bg-slate-50 p-2 text-xs text-slate-600 rounded mb-2">請選擇：<span className="font-bold text-slate-800">資訊圖表 {'->'} 精簡 {'->'} 橫式</span></div>
+                    <Button onClick={() => copyToClipboard(PROMPTS.notebooklm_style)} icon={Copy} variant="secondary" className="w-full">複製風格指令 (Style Guide)</Button>
+                    </div>
+                )}
                 
-                {/* 移除了勾選確認方塊 */}
-
-                {activeTask.status === 'visuals' && (
+                {!isDone && currentStep === 3 && (
                   <div className="mt-4 flex justify-end">
-                    <Button 
-                       onClick={() => updateTask(activeTask.id, { status: 'review' })} 
-                       icon={ArrowRight}
-                    >
-                      下一步：上架整合
-                    </Button>
+                    <Button onClick={() => handleNextStep(activeTask)} icon={ArrowRight}>下一步：上架整合</Button>
                   </div>
                 )}
               </Card>
-            </section>
+            </div>
 
-             <section className={`transition-all duration-300 ${activeTask.status === 'review' ? 'opacity-100 scale-100' : (activeTask.status === 'published' ? 'opacity-50 grayscale' : 'opacity-30 pointer-events-none')}`}>
+             {/* Step 4: Substack */}
+             <div id="step-4" className={`transition-all duration-300 ${!isDone && currentStep === 4 ? 'opacity-100 scale-100' : 'opacity-50 grayscale'}`}>
               <div className="flex items-center mb-3">
-                <div className={`w-7 h-7 sm:w-8 sm:h-8 rounded-full flex items-center justify-center font-bold mr-3 text-sm sm:text-base ${activeTask.status === 'review' ? 'bg-orange-600 text-white' : 'bg-orange-100 text-orange-800'}`}>4</div>
+                <div className={`w-7 h-7 sm:w-8 sm:h-8 rounded-full flex items-center justify-center font-bold mr-3 text-sm sm:text-base ${!isDone && currentStep === 4 ? 'bg-orange-600 text-white' : 'bg-orange-100 text-orange-800'}`}>4</div>
                 <h3 className="text-base sm:text-lg font-bold text-gray-800">上架整合 (Substack)</h3>
               </div>
-              <Card className={`p-4 bg-white border-orange-200 bg-orange-50 transition-all ${activeTask.status === 'review' ? 'ring-2 ring-orange-400 shadow-lg' : ''}`}>
+              <Card className={`p-4 bg-white border-orange-200 bg-orange-50 transition-all ${!isDone && currentStep === 4 ? 'ring-2 ring-orange-400 shadow-lg' : ''}`}>
                 
-                <div className="mb-6">
-                  <div className="flex justify-between items-end mb-2">
-                    <label className="text-sm font-bold text-gray-700 flex items-center">
-                      <LayoutTemplate size={16} className="mr-2"/> 草稿預覽 (自動排版)
-                    </label>
-                    <Button 
-                      onClick={handleCopySubstackDraft} 
-                      icon={Copy} 
-                      variant="magic" 
-                      className="text-xs py-1 px-3 h-8"
-                      disabled={!activeTask.summary}
-                    >
-                      一鍵複製完整草稿
-                    </Button>
-                  </div>
-                  
-                  <div 
-                    ref={substackPreviewRef}
-                    className="bg-white border border-gray-200 p-6 rounded-lg shadow-sm text-gray-800 leading-relaxed font-serif"
-                    style={{ minHeight: '300px' }}
-                  >
-                    <h1 className="text-2xl font-bold mb-4 text-black border-b pb-2">
-                      {renderMarkdownText(summaryParts.title || activeTask.title)}
-                    </h1>
+                {!isDone && currentStep === 4 && (
+                    <>
+                    <div className="mb-6">
+                    <div className="flex justify-between items-end mb-2">
+                        <label className="text-sm font-bold text-gray-700 flex items-center"><LayoutTemplate size={16} className="mr-2"/> 草稿預覽 (自動排版)</label>
+                        <Button onClick={handleCopySubstackDraft} icon={Copy} variant="magic" className="text-xs py-1 px-3 h-8" disabled={!activeTask.summary}>一鍵複製完整草稿</Button>
+                    </div>
                     
-                    <p className="mb-6 text-lg whitespace-pre-line">
-                      {renderMarkdownText(summaryParts.p1 || "等待摘要生成...")}
-                    </p>
-                    
-                    {/* Placeholder for Infographic */}
-                    <div className="my-8 p-4 bg-gray-50 border-2 border-dashed border-gray-300 rounded-lg text-center">
-                      <span className="text-gray-400 font-mono">[此處將插入資訊圖表]</span>
+                    <div ref={substackPreviewRef} className="bg-white border border-gray-200 p-6 rounded-lg shadow-sm text-gray-800 leading-relaxed font-serif" style={{ minHeight: '300px' }}>
+                        <h1 className="text-2xl font-bold mb-4 text-black border-b pb-2">{renderMarkdownText(summaryParts.title || activeTask.title)}</h1>
+                        <p className="mb-6 text-lg whitespace-pre-line">{renderMarkdownText(summaryParts.p1 || "等待摘要生成...")}</p>
+                        <div className="my-8 p-4 bg-gray-50 border-2 border-dashed border-gray-300 rounded-lg text-center"><span className="text-gray-400 font-mono">[此處將插入資訊圖表]</span></div>
+                        <p className="mb-6 text-lg whitespace-pre-line">{renderMarkdownText(summaryParts.p2)}</p>
+                        {activeTask.url && (<div className="text-sm text-gray-500 mt-8 pt-4 border-t">資料來源：<a href={activeTask.url} target="_blank" rel="noreferrer" className="text-blue-600 underline">原始新聞連結</a></div>)}
+                    </div>
                     </div>
 
-                    <p className="mb-6 text-lg whitespace-pre-line">
-                      {renderMarkdownText(summaryParts.p2)}
-                    </p>
-                    
-                    {activeTask.url && (
-                      <div className="text-sm text-gray-500 mt-8 pt-4 border-t">
-                        資料來源：<a href={activeTask.url} target="_blank" rel="noreferrer" className="text-blue-600 underline">原始新聞連結</a>
-                      </div>
-                    )}
-                  </div>
-                </div>
-
-                <div className="border-t border-orange-200 pt-4 mt-4">
-                   {activeTask.status === 'review' && (
-                    <div className="flex justify-center">
-                      <Button 
-                         onClick={handleCopySubstackDraft} 
-                         icon={Sparkles} 
-                         variant="magic"
-                         className="w-full py-4 text-lg font-bold shadow-xl hover:shadow-2xl transform hover:-translate-y-1 transition-all"
-                         disabled={!activeTask.summary}
-                      >
-                        ✨ 複製草稿並完成任務
-                      </Button>
+                    <div className="border-t border-orange-200 pt-4 mt-4">
+                        <div className="flex justify-center">
+                        <Button onClick={handleCopySubstackDraft} icon={Sparkles} variant="magic" className="w-full py-4 text-lg font-bold shadow-xl hover:shadow-2xl transform hover:-translate-y-1 transition-all" disabled={!activeTask.summary}>✨ 複製草稿並完成任務</Button>
+                        </div>
                     </div>
-                  )}
-                </div>
+                    </>
+                )}
               </Card>
-            </section>
+            </div>
 
           </div>
         </div>
       </div>
     );
   };
-
 
   const renderSettingsModal = () => {
     if (!isSettingsOpen) return null;
@@ -957,15 +671,6 @@ export default function App() {
           </div>
           
           <div className="space-y-4">
-            <div className="p-3 bg-blue-50 text-blue-800 rounded-lg text-sm mb-4">
-              填入 API Key 後，系統將啟用「✨ AI 自動產生」功能。
-              <br/>Key 僅儲存在您的瀏覽器中，不會上傳伺服器。
-              <br/><br/>
-              <span className="text-xs text-blue-600">
-                提示：如果環境變數已設定 API Key，系統會自動使用。您也可以在此手動填入自己的 Key。
-              </span>
-            </div>
-
             <div>
               <label className="block text-sm font-bold text-gray-700 mb-1">OpenAI API Key</label>
               <div className="relative">
@@ -1023,11 +728,9 @@ export default function App() {
   };
 
   const columns = [
-    { id: 'inbox', title: '待處理', color: 'bg-gray-100' },
-    { id: 'processing', title: '🤖 研究撰寫', color: 'bg-blue-50' },
-    { id: 'visuals', title: '🎨 製圖中', color: 'bg-purple-50' },
-    { id: 'review', title: '🚀 準備發布', color: 'bg-orange-50' },
-    { id: 'published', title: '✅ 已處理', color: 'bg-green-50' },
+    { id: 'todo', title: '📥 待處理', color: 'bg-gray-100' },
+    { id: 'in_progress', title: '⚡️ 處理中', color: 'bg-blue-50' },
+    { id: 'done', title: '✅ 已處理', color: 'bg-green-50' },
   ];
 
   return (
@@ -1081,8 +784,8 @@ export default function App() {
                     <div onClick={() => setActiveTaskId(task.id)}>
                       <div className="flex justify-between items-start mb-2">
                         <Badge color={
-                          task.status === 'inbox' ? 'gray' : 
-                          task.status === 'review' ? 'yellow' : 'blue'
+                          task.status === 'todo' ? 'gray' : 
+                          task.status === 'in_progress' ? 'blue' : 'green'
                         }>
                           {new Date(task.created_at).toLocaleDateString()}
                         </Badge>
@@ -1101,6 +804,18 @@ export default function App() {
                         <span className="line-clamp-2">{task.content}</span>
                       </p>
                       
+                      {/* 進度指示圖示 - 簡化顯示 */}
+                      <div className="flex items-center space-x-3 text-xs text-gray-400 border-t pt-2 mt-2">
+                        {task.status === 'in_progress' && (
+                            <span className="text-blue-600 font-bold">進行至第 {task.step}/4 步</span>
+                        )}
+                        {task.status === 'done' && (
+                            <span className="text-green-600 font-bold">🎉 已完成</span>
+                        )}
+                        {task.status === 'todo' && (
+                            <span className="text-gray-500">等待處理</span>
+                        )}
+                      </div>
                     </div>
                   </Card>
                 ))}
