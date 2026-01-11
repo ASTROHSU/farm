@@ -19,7 +19,10 @@ touch .env.local
 
 ```
 VITE_OPENAI_API_KEY=sk-your-actual-api-key-here
+VITE_GOOGLE_SHEETS_API_URL=https://script.google.com/macros/s/YOUR_SCRIPT_ID/exec
 ```
+
+**注意**：`VITE_GOOGLE_SHEETS_API_URL` 是選填的。如果未設定，系統會使用本地儲存（localStorage）。如需協作功能，請參考 `GOOGLE_SHEETS_SETUP.md` 進行設定。
 
 ### 3. 重要提醒
 
