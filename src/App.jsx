@@ -3,7 +3,6 @@ import { Plus, Copy, Check, ArrowRight, FileText, Image as ImageIcon, Share, Tra
 
 // --- 配置與 Prompt 資料庫 ---
 const PROMPTS = {
-  // 修改：加入強制指令，禁止客套話
   gemini: `請你替我研究這個主題並以繁體中文製作報告，內容包含目前的發展進度是什麼、為什麼會發生這件事（為什麼會做這個決定），以及這件事會對未來產生什麼影響？還有，我也想知道網路上有哪些人對這起事件有哪些正面和反面的論點？他們說了什麼、為什麼這樣說？
 
 **重要規則：請直接開始輸出報告內容（Markdown 格式），嚴格禁止任何開場白（例如：「好的，我將為您...」）或結語。**`,
@@ -61,12 +60,10 @@ const Badge = ({ children, color = "blue" }) => {
   );
 };
 
-// 修改 Button 組件以支援暫時性文字變化 (Copied feedback)
 const Button = ({ onClick, children, variant = "primary", className = "", icon: Icon, disabled = false, loading = false }) => {
   const [feedback, setFeedback] = useState(null);
   
   const handleClick = async (e) => {
-    // 攔截 onClick 來處理複製回饋，如果 onClick 回傳 "copied"，則顯示回饋
     const result = await onClick(e);
     if (result === 'copied') {
       setFeedback('已複製！');
@@ -132,9 +129,6 @@ const callGeminiAPI = async (apiKey, prompt, content) => {
       if (!parts) throw new Error("無法從 Gemini 回應中解析內容。");
       
       let text = parts.filter(p => p.text).map(p => p.text).join('\n');
-
-      // 後處理：移除常見的 LLM 開場白
-      // 針對「好的，我將...」、「Sure, here is...」等開頭進行刪除
       text = text.replace(/^(好的|沒問題|当然|當然|Sure|Here is).*?[\n\r]+/i, "").trim();
 
       return text;
@@ -294,7 +288,8 @@ export default function App() {
       window.getSelection().addRange(range);
       try {
         document.execCommand('copy');
-        return 'copied'; // 告訴 Button 組件顯示回饋
+        alert("文字與格式已複製！\n\n【⚠️ 重要提醒】\n由於瀏覽器安全限制，圖片無法直接貼上。\n請直接將您電腦中的圖片「拖曳」到 Substack 編輯器中。");
+        return 'copied';
       } catch (err) {
         alert("複製失敗，請手動選取內容複製。");
       }
@@ -311,7 +306,6 @@ export default function App() {
     try {
       const result = await callGeminiAPI(apiKeys.gemini, PROMPTS.gemini, activeTask.content);
       updateTask(activeTask.id, { geminiReport: result });
-      // 成功後不顯示 Alert，直接更新 UI
     } catch (error) {
       alert(`發生錯誤：${error.message}\n\n已嘗試多個模型版本，請檢查 API Key 權限。`);
     } finally {
@@ -328,7 +322,6 @@ export default function App() {
     try {
       const result = await callOpenAIAPI(apiKeys.openai, PROMPTS.chatgpt_role, activeTask.geminiReport);
       updateTask(activeTask.id, { summary: result });
-      // 成功後不顯示 Alert
     } catch (error) {
       alert(`發生錯誤：${error.message}`);
     } finally {
@@ -346,6 +339,18 @@ export default function App() {
     if (remaining.length > 0) p1 = remaining[0];
     if (remaining.length > 1) p2 = remaining.slice(1).join('\n\n');
     return { title, p1, p2 };
+  };
+
+  // Helper function to render text with markdown bolding as HTML bold
+  const renderMarkdownText = (text) => {
+    if (!text) return null;
+    const parts = text.split(/(\*\*.*?\*\*)/g); // Split by bold markers
+    return parts.map((part, index) => {
+      if (part.startsWith('**') && part.endsWith('**')) {
+        return <strong key={index}>{part.slice(2, -2)}</strong>;
+      }
+      return part;
+    });
   };
 
   const renderWizard = () => {
@@ -438,7 +443,9 @@ export default function App() {
                   <Button onClick={() => copyGeminiPrompt(PROMPTS.gemini, activeTask.content)} icon={Copy} variant="secondary" className="w-full">
                     手動複製指令到 Gemini
                   </Button>
-                  <Button 
+                  
+                  {/* 已暫時隱藏自動按鈕 */}
+                  {/* <Button 
                     onClick={handleGeminiGenerate} 
                     icon={Sparkles} 
                     variant="magic" 
@@ -446,6 +453,9 @@ export default function App() {
                     loading={isGeneratingGemini}
                   >
                     AI 自動產生報告 (Deep Research)
+                  </Button> */}
+                  <Button disabled variant="ghost" className="w-full bg-gray-100 text-gray-400 border border-gray-200 cursor-not-allowed">
+                    AI 自動產生 (暫時維護中)
                   </Button>
                 </div>
 
@@ -636,14 +646,19 @@ export default function App() {
                     </Button>
                   </div>
                   
+                  {/* 使用 renderMarkdownText 處理預覽文字，移除星號並加粗 */}
                   <div 
                     ref={substackPreviewRef}
                     className="bg-white border border-gray-200 p-6 rounded-lg shadow-sm text-gray-800 leading-relaxed font-serif"
                     style={{ minHeight: '300px' }}
                   >
-                    <h1 className="text-2xl font-bold mb-4 text-black border-b pb-2">{summaryParts.title || activeTask.title}</h1>
+                    <h1 className="text-2xl font-bold mb-4 text-black border-b pb-2">
+                      {renderMarkdownText(summaryParts.title || activeTask.title)}
+                    </h1>
                     
-                    <p className="mb-6 text-lg whitespace-pre-line">{summaryParts.p1 || "等待摘要生成..."}</p>
+                    <p className="mb-6 text-lg whitespace-pre-line">
+                      {renderMarkdownText(summaryParts.p1 || "等待摘要生成...")}
+                    </p>
                     
                     <div className="my-8 flex justify-center">
                       {activeTask.imageBlobUrl ? (
@@ -660,7 +675,9 @@ export default function App() {
                       )}
                     </div>
 
-                    <p className="mb-6 text-lg whitespace-pre-line">{summaryParts.p2}</p>
+                    <p className="mb-6 text-lg whitespace-pre-line">
+                      {renderMarkdownText(summaryParts.p2)}
+                    </p>
                     
                     {activeTask.url && (
                       <div className="text-sm text-gray-500 mt-8 pt-4 border-t">
