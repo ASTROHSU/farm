@@ -88,22 +88,42 @@ const GOOGLE_SHEETS_API_URL = import.meta.env.VITE_GOOGLE_SHEETS_API_URL || '';
 // 從 Google Sheets 讀取所有任務
 const fetchTasksFromSheets = async () => {
   if (!GOOGLE_SHEETS_API_URL) {
-    console.warn('Google Sheets API URL 未設定，將使用本地儲存');
+    console.warn('⚠️ Google Sheets API URL 未設定，將使用本地儲存');
+    console.log('💡 提示：請在 .env.local 或 Vercel 環境變數中設定 VITE_GOOGLE_SHEETS_API_URL');
     return null;
   }
   
+  console.log('📡 正在從 Google Sheets 讀取資料...', GOOGLE_SHEETS_API_URL);
+  
   try {
-    const response = await fetch(`${GOOGLE_SHEETS_API_URL}?t=${Date.now()}`);
+    const url = `${GOOGLE_SHEETS_API_URL}?t=${Date.now()}`;
+    console.log('🔗 請求 URL:', url);
+    
+    const response = await fetch(url);
+    console.log('📥 回應狀態:', response.status, response.statusText);
+    
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+    }
+    
     const data = await response.json();
+    console.log('✅ 讀取成功，資料:', data);
     
     if (data.error) {
-      console.error('Google Sheets 錯誤:', data.error);
+      console.error('❌ Google Sheets 錯誤:', data.error);
       return null;
     }
     
-    return Array.isArray(data) ? data.filter(task => task.status !== 'archived') : null;
+    const tasks = Array.isArray(data) ? data.filter(task => task.status !== 'archived') : null;
+    console.log(`📊 過濾後任務數量: ${tasks?.length || 0}`);
+    return tasks;
   } catch (error) {
-    console.error('讀取 Google Sheets 失敗:', error);
+    console.error('❌ 讀取 Google Sheets 失敗:', error);
+    console.error('錯誤詳情:', {
+      message: error.message,
+      stack: error.stack,
+      url: GOOGLE_SHEETS_API_URL
+    });
     return null;
   }
 };
@@ -111,26 +131,55 @@ const fetchTasksFromSheets = async () => {
 // 同步任務到 Google Sheets
 const syncTaskToSheets = async (action, task) => {
   if (!GOOGLE_SHEETS_API_URL) {
-    console.warn('Google Sheets API URL 未設定，跳過同步');
-    return;
+    console.warn('⚠️ Google Sheets API URL 未設定，跳過同步');
+    console.log('💡 提示：請在 .env.local 或 Vercel 環境變數中設定 VITE_GOOGLE_SHEETS_API_URL');
+    return { success: false, error: 'API URL 未設定' };
   }
   
+  console.log(`📤 同步到 Google Sheets [${action}]:`, task);
+  console.log('🔗 API URL:', GOOGLE_SHEETS_API_URL);
+  
   try {
+    const payload = { action, task };
+    console.log('📦 請求資料:', JSON.stringify(payload, null, 2));
+    
     const response = await fetch(GOOGLE_SHEETS_API_URL, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
       },
-      body: JSON.stringify({ action, task }),
+      body: JSON.stringify(payload),
     });
     
-    const result = await response.json();
-    if (result.error) {
-      console.error('同步到 Google Sheets 失敗:', result.error);
+    console.log('📥 回應狀態:', response.status, response.statusText);
+    
+    if (!response.ok) {
+      const errorText = await response.text();
+      console.error('❌ HTTP 錯誤:', errorText);
+      throw new Error(`HTTP ${response.status}: ${errorText}`);
     }
+    
+    const result = await response.json();
+    console.log('✅ 同步結果:', result);
+    
+    if (result.error) {
+      console.error('❌ Google Sheets 錯誤:', result.error);
+      return { success: false, error: result.error };
+    }
+    
+    console.log('✅ 同步成功！');
+    return { success: true, result };
   } catch (error) {
-    console.error('同步到 Google Sheets 失敗:', error);
+    console.error('❌ 同步到 Google Sheets 失敗:', error);
+    console.error('錯誤詳情:', {
+      message: error.message,
+      stack: error.stack,
+      action,
+      taskId: task?.id,
+      url: GOOGLE_SHEETS_API_URL
+    });
     // 失敗時不影響使用者體驗，只記錄錯誤
+    return { success: false, error: error.message };
   }
 };
 
@@ -245,6 +294,7 @@ export default function App() {
   const [confirmDialog, setConfirmDialog] = useState({ isOpen: false, type: '', id: null });
   
   const [isGeneratingGPT, setIsGeneratingGPT] = useState(false);
+  const [syncStatus, setSyncStatus] = useState({ lastSync: null, error: null, testing: false });
 
   const substackPreviewRef = useRef(null);
   const [modalHeight, setModalHeight] = useState('90vh');
