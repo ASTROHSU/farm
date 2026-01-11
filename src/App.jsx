@@ -20,9 +20,7 @@ const PROMPTS = {
 1. **第一段**：概述事件發生的主體與核心衝突。
 2. **第二段**：提供支持該事件的關鍵數據、證據或具體處置結果。`,
 
-  notebooklm_style: `請根據上傳的內容製作圖表，設定選擇「資訊圖表 -> 精簡 -> 橫式」，並在 Prompt 欄位填入以下風格指令：
-
-統一色票 (Color Palette)：
+  notebooklm_style: `統一色票 (Color Palette)：
 * 背景底色： 使用 乾淨的米白色 (Cream / Off-White, #F9F9F7) 或 極淺灰 (Light Grey)，取代原本各自不同的深黑或亮橘背景，確保閱讀舒適度。
 * 主色調 (Primary)： 使用 專業深海藍 (Deep Navy Blue, #1A365D) 用於標題與主要圖標，展現權威感。
 * 強調色 (Accent)： 使用 活力珊瑚紅 (Coral Red) 或 亮眼金 (Muted Gold) 用來標示數據重點（如「700萬美元」、「20.2億」），要在米色背景上能跳出來。
