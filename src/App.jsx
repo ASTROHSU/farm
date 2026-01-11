@@ -1,5 +1,5 @@
-import React, { useState, useEffect } from 'react';
-import { Plus, Copy, Check, ArrowRight, FileText, Image as ImageIcon, Share, Trash2, ExternalLink, Settings, X, AlignLeft, Archive, AlertTriangle, ClipboardPaste, Sparkles, Loader2, Key } from 'lucide-react';
+import React, { useState, useEffect, useRef } from 'react';
+import { Plus, Copy, Check, ArrowRight, FileText, Image as ImageIcon, Share, Trash2, ExternalLink, Settings, X, AlignLeft, Archive, AlertTriangle, ClipboardPaste, Sparkles, Loader2, Key, Upload, LayoutTemplate } from 'lucide-react';
 
 // --- 配置與 Prompt 資料庫 ---
 const PROMPTS = {
@@ -79,80 +79,64 @@ const Button = ({ onClick, children, variant = "primary", className = "", icon: 
 
 // --- API Service ---
 
+// 自動嘗試多個模型以確保 Deep Research 可用
 const callGeminiAPI = async (apiKey, prompt, content) => {
   const fullPrompt = `${prompt}\n\n**原始素材：**\n${content}`;
   
-  // 嘗試使用 Gemini 2.5 Pro (支援 Deep Research)，如果失敗則嘗試其他版本
-  const models = ['gemini-2.5-pro', 'gemini-1.5-pro', 'gemini-pro'];
-  const apiVersions = ['v1beta', 'v1'];
-  
-  for (const apiVersion of apiVersions) {
-    for (const model of models) {
-      try {
-        const url = `https://generativelanguage.googleapis.com/${apiVersion}/models/${model}:generateContent?key=${apiKey}`;
-        const response = await fetch(url, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            contents: [{ parts: [{ text: fullPrompt }] }],
-            // Deep Research 參數：啟用更深入的研究和分析
-            generationConfig: {
-              temperature: 0.7,
-              topK: 40,
-              topP: 0.95,
-              maxOutputTokens: 8192,
-            },
-            // 啟用安全設定但允許更多內容
-            safetySettings: [
-              {
-                category: "HARM_CATEGORY_HARASSMENT",
-                threshold: "BLOCK_MEDIUM_AND_ABOVE"
-              },
-              {
-                category: "HARM_CATEGORY_HATE_SPEECH",
-                threshold: "BLOCK_MEDIUM_AND_ABOVE"
-              },
-              {
-                category: "HARM_CATEGORY_SEXUALLY_EXPLICIT",
-                threshold: "BLOCK_MEDIUM_AND_ABOVE"
-              },
-              {
-                category: "HARM_CATEGORY_DANGEROUS_CONTENT",
-                threshold: "BLOCK_MEDIUM_AND_ABOVE"
-              }
-            ]
-          })
-        });
-        
-        const data = await response.json();
-        if (data.error) {
-          // 如果是模型不存在錯誤，嘗試下一個模型
-          if (data.error.message && data.error.message.includes('not found')) {
-            continue;
-          }
-          throw new Error(data.error.message);
+  // 模型優先順序清單：使用者指定的 -> 最新預覽 -> 穩定版 Pro
+  const modelsToTry = [
+    'gemini-3.0-pro', // 用戶指定
+    'gemini-2.0-flash-exp', // 備用1
+    'gemini-1.5-pro' // 備用2 (通常最穩定支援 Search)
+  ];
+
+  let lastError = null;
+
+  for (const model of modelsToTry) {
+    try {
+      console.log(`Trying Gemini model: ${model}...`);
+      const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          contents: [{ parts: [{ text: fullPrompt }] }],
+          tools: [{ google_search: {} }] // 啟用 Deep Research (Grounding)
+        })
+      });
+      
+      const data = await response.json();
+      
+      if (data.error) {
+        // 如果是 Model not found，繼續嘗試下一個
+        if (data.error.code === 404 || data.error.message.includes('not found') || data.error.message.includes('supported')) {
+          console.warn(`Model ${model} failed, trying next...`);
+          lastError = new Error(`Model ${model} not available: ${data.error.message}`);
+          continue;
         }
-        
-        if (data.candidates && data.candidates[0] && data.candidates[0].content) {
-          return data.candidates[0].content.parts[0].text;
-        }
-        throw new Error('未收到有效回應');
-      } catch (error) {
-        // 如果是最後一個模型和版本，拋出錯誤
-        if (model === models[models.length - 1] && apiVersion === apiVersions[apiVersions.length - 1]) {
-          console.error(`Gemini API Error (${apiVersion}/${model}):`, error);
-          throw new Error(`API 調用失敗：${error.message || '請檢查 API Key 和網路連線'}`);
-        }
-        // 否則繼續嘗試下一個模型
-        continue;
+        throw new Error(data.error.message);
+      }
+      
+      const parts = data.candidates?.[0]?.content?.parts;
+      if (!parts) throw new Error("無法從 Gemini 回應中解析內容。");
+      
+      return parts.filter(p => p.text).map(p => p.text).join('\n');
+      
+    } catch (error) {
+      lastError = error;
+      // 如果不是 404 類錯誤（例如 API Key 錯誤），通常不應該繼續試，但為了保險起見，我們讓迴圈繼續直到沒模型
+      if (error.message.includes('API key') || error.message.includes('permission')) {
+        throw error;
       }
     }
   }
-  
-  throw new Error('所有 Gemini 模型都無法使用，請檢查 API Key 是否有效');
+
+  // 如果都失敗
+  throw lastError || new Error("所有 Gemini 模型嘗試皆失敗，請確認 API Key 或網絡狀態。");
 };
 
 const callOpenAIAPI = async (apiKey, systemPrompt, userContent) => {
+  const userMessage = `請根據以下「Gemini 研究報告」內容進行撰寫：\n\n「\n${userContent}\n」`;
+  
   try {
     const response = await fetch('https://api.openai.com/v1/chat/completions', {
       method: 'POST',
@@ -161,10 +145,10 @@ const callOpenAIAPI = async (apiKey, systemPrompt, userContent) => {
         'Authorization': `Bearer ${apiKey}`
       },
       body: JSON.stringify({
-        model: "gpt-4o", // 使用較新的模型
+        model: "gpt-4o",
         messages: [
           { role: "system", content: systemPrompt },
-          { role: "user", content: userContent }
+          { role: "user", content: userMessage }
         ],
         temperature: 0.7
       })
@@ -186,7 +170,7 @@ export default function App() {
     try {
       const saved = localStorage.getItem('content-farm-tasks');
       return saved ? JSON.parse(saved) : [
-        { id: 1, title: '範例：SEC 起訴 Coinbase', status: 'inbox', url: 'https://example.com', content: '這裡是一段範例的原始文字內容...', geminiReport: '', created_at: new Date().toISOString() },
+        { id: 1, title: '範例：SEC 起訴 Coinbase', status: 'inbox', url: 'https://example.com', content: '這裡是一段範例的原始文字內容...', geminiReport: '', summary: '', imageBlobUrl: null, substackLink: '', created_at: new Date().toISOString() },
       ];
     } catch (e) {
       return [];
@@ -207,9 +191,11 @@ export default function App() {
   const [activeTaskId, setActiveTaskId] = useState(null);
   const [confirmDialog, setConfirmDialog] = useState({ isOpen: false, type: '', id: null });
   
-  // Loading states for AI generation
   const [isGeneratingGemini, setIsGeneratingGemini] = useState(false);
   const [isGeneratingGPT, setIsGeneratingGPT] = useState(false);
+
+  // 預覽區 Ref
+  const substackPreviewRef = useRef(null);
 
   const activeTask = tasks.find(t => t.id === activeTaskId);
 
@@ -235,13 +221,15 @@ export default function App() {
       url,
       content: rawContent,
       geminiReport: '', 
+      summary: '',
+      imageBlobUrl: null, // 用於存儲上傳圖片的預覽 URL
       status: 'inbox',
       created_at: new Date().toISOString(),
-      summary: '',
       imageStatus: false,
       substackLink: ''
     };
-    setTasks([...tasks, newTask]);
+    // 修改這裡：將新任務放在陣列最前面
+    setTasks([newTask, ...tasks]);
     setIsModalOpen(false);
   };
 
@@ -276,6 +264,35 @@ export default function App() {
     setConfirmDialog({ isOpen: false, type: '', id: null });
   };
 
+  // --- Image Upload Handler ---
+  const handleImageUpload = (e) => {
+    const file = e.target.files[0];
+    if (file) {
+      const url = URL.createObjectURL(file);
+      updateTask(activeTask.id, { imageBlobUrl: url, imageStatus: true });
+    }
+  };
+
+  // --- Copy Handler ---
+  const handleCopySubstackDraft = () => {
+    if (substackPreviewRef.current) {
+      // 嘗試選取並複製 HTML (這能保留圖片標籤，但貼上到 Substack 是否成功取決於瀏覽器與 Substack 的相容性)
+      const range = document.createRange();
+      range.selectNode(substackPreviewRef.current);
+      window.getSelection().removeAllRanges();
+      window.getSelection().addRange(range);
+      
+      try {
+        document.execCommand('copy');
+        alert("已複製完整內容（含圖片位置）！\n\n請直接到 Substack 貼上。\n注意：如果圖片無法顯示，請手動拖曳圖片檔案上傳。");
+      } catch (err) {
+        alert("複製失敗，請手動選取內容複製。");
+      }
+      
+      window.getSelection().removeAllRanges();
+    }
+  };
+
   // --- AI Generation Handlers ---
 
   const handleGeminiGenerate = async () => {
@@ -288,9 +305,9 @@ export default function App() {
     try {
       const result = await callGeminiAPI(apiKeys.gemini, PROMPTS.gemini, activeTask.content);
       updateTask(activeTask.id, { geminiReport: result });
-      alert("Gemini 報告產生成功！已自動帶入第二步。");
+      alert("Gemini 報告產生成功！(已確保使用 Deep Research)");
     } catch (error) {
-      alert(`發生錯誤：${error.message}`);
+      alert(`發生錯誤：${error.message}\n\n已嘗試多個模型版本，請檢查 API Key 權限。`);
     } finally {
       setIsGeneratingGemini(false);
     }
@@ -308,10 +325,31 @@ export default function App() {
       updateTask(activeTask.id, { summary: result });
       alert("ChatGPT 文案撰寫成功！");
     } catch (error) {
-      alert(`發生錯誤：${error.message}\n注意：OpenAI API 可能會因為瀏覽器 CORS 安全限制而失敗。如果持續失敗，請使用「一鍵複製」手動貼上。`);
+      alert(`發生錯誤：${error.message}`);
     } finally {
       setIsGeneratingGPT(false);
     }
+  };
+
+  // --- Helper to parse summary into parts ---
+  const parseSummary = (text) => {
+    if (!text) return { title: '', p1: '', p2: '' };
+    
+    // 簡單解析邏輯：假設第一行是標題，後面用空行分隔段落
+    const lines = text.split('\n').filter(line => line.trim() !== '');
+    const title = lines[0] || '';
+    
+    // 尋找段落
+    let p1 = '';
+    let p2 = '';
+    
+    // 移除標題後剩下的部分
+    const remaining = lines.slice(1);
+    
+    if (remaining.length > 0) p1 = remaining[0];
+    if (remaining.length > 1) p2 = remaining.slice(1).join('\n\n'); // 剩下的都當第二段
+
+    return { title, p1, p2 };
   };
 
   // 處理流程介面 (The Wizard)
@@ -332,9 +370,9 @@ export default function App() {
         try {
           const successful = document.execCommand('copy');
           if (successful) alert(successMessage);
-          else alert('複製失敗，請手動選取文字複製。');
+          else alert('複製失敗');
         } catch (err) {
-          alert('複製失敗，您的瀏覽器不支援自動複製。');
+          alert('複製失敗');
         }
         document.body.removeChild(textArea);
       };
@@ -359,7 +397,9 @@ export default function App() {
 
     const copyChatGPTPrompt = (rolePrompt, report) => {
       let fullText = rolePrompt;
-      if (report) fullText += `\n\n\n${report}`;
+      if (report) {
+        fullText += `\n\n請根據以下「Gemini 研究報告」內容進行撰寫：\n\n「\n${report}\n」`;
+      }
       secureCopy(fullText, '已複製！\n包含了「指令」與「Gemini 報告」，請直接貼到 ChatGPT。');
     };
 
@@ -367,6 +407,8 @@ export default function App() {
       secureCopy(text, msg);
     };
     // ------------------------------------------------
+
+    const summaryParts = parseSummary(activeTask.summary);
 
     return (
       <div className="fixed inset-0 bg-black/50 flex items-end sm:items-center justify-center z-50 sm:p-4 backdrop-blur-sm">
@@ -417,7 +459,7 @@ export default function App() {
                     className="w-full"
                     loading={isGeneratingGemini}
                   >
-                    AI 自動產生報告
+                    AI 自動產生報告 (Deep Research)
                   </Button>
                 </div>
 
@@ -572,70 +614,118 @@ export default function App() {
               </Card>
             </section>
 
-             {/* Step 4: Substack */}
+             {/* Step 4: Substack (Enhanced Integration) */}
              <section className={`transition-all duration-300 ${activeTask.status === 'review' ? 'opacity-100 scale-100' : (activeTask.status === 'published' ? 'opacity-50 grayscale' : 'opacity-30 pointer-events-none')}`}>
               <div className="flex items-center mb-3">
                 <div className={`w-7 h-7 sm:w-8 sm:h-8 rounded-full flex items-center justify-center font-bold mr-3 text-sm sm:text-base ${activeTask.status === 'review' ? 'bg-orange-600 text-white' : 'bg-orange-100 text-orange-800'}`}>4</div>
-                <h3 className="text-base sm:text-lg font-bold text-gray-800">上架整合</h3>
+                <h3 className="text-base sm:text-lg font-bold text-gray-800">上架整合 (Substack)</h3>
               </div>
               <Card className={`p-4 bg-white border-orange-200 bg-orange-50 transition-all ${activeTask.status === 'review' ? 'ring-2 ring-orange-400 shadow-lg' : ''}`}>
-                <p className="text-sm text-gray-600 mb-3">
-                  貼上 Substack 預覽連結：
-                </p>
-                <input 
-                  type="text"
-                  className="w-full border rounded p-2 mb-4 text-sm focus:ring-2 focus:ring-orange-300 outline-none"
-                  placeholder="https://substack.com/..."
-                  value={activeTask.substackLink}
-                  onChange={(e) => updateTask(activeTask.id, { substackLink: e.target.value })}
-                />
-                 {activeTask.status === 'review' && (
-                  <div className="flex justify-end">
+                
+                {/* 圖片上傳區 */}
+                <div className="mb-6">
+                  <label className="block text-sm font-bold text-gray-700 mb-2 flex items-center">
+                    <Upload size={16} className="mr-2"/> 上傳資訊圖表 (NotebookLM 產出)
+                  </label>
+                  <div className="flex items-center space-x-4">
+                    <label className="cursor-pointer bg-white border border-gray-300 hover:bg-gray-50 text-gray-700 px-4 py-2 rounded-md text-sm font-medium transition-colors flex items-center">
+                      <input type="file" accept="image/*" className="hidden" onChange={handleImageUpload} />
+                      <ImageIcon size={16} className="mr-2"/> 選擇圖片
+                    </label>
+                    {activeTask.imageBlobUrl ? (
+                      <span className="text-xs text-green-600 font-bold flex items-center"><Check size={14} className="mr-1"/> 圖片已載入</span>
+                    ) : (
+                      <span className="text-xs text-red-500">尚未上傳圖片</span>
+                    )}
+                  </div>
+                </div>
+
+                {/* Substack 預覽區 */}
+                <div className="mb-6">
+                  <div className="flex justify-between items-end mb-2">
+                    <label className="text-sm font-bold text-gray-700 flex items-center">
+                      <LayoutTemplate size={16} className="mr-2"/> 草稿預覽 (自動排版)
+                    </label>
                     <Button 
-                       onClick={() => {
-                         updateTask(activeTask.id, { status: 'published' });
-                         setActiveTaskId(null); // 完成後關閉視窗
-                       }} 
-                       icon={Check}
-                       disabled={!activeTask.substackLink}
+                      onClick={handleCopySubstackDraft} 
+                      icon={Copy} 
+                      variant="magic" 
+                      className="text-xs py-1 px-3 h-8"
+                      disabled={!activeTask.summary}
                     >
-                      提交完成
+                      一鍵複製完整草稿
                     </Button>
                   </div>
-                )}
+                  
+                  {/* Preview Container - This is what gets copied */}
+                  <div 
+                    ref={substackPreviewRef}
+                    className="bg-white border border-gray-200 p-6 rounded-lg shadow-sm text-gray-800 leading-relaxed font-serif"
+                    style={{ minHeight: '300px' }}
+                  >
+                    {/* Title */}
+                    <h1 className="text-2xl font-bold mb-4 text-black border-b pb-2">{summaryParts.title || activeTask.title}</h1>
+                    
+                    {/* Para 1 */}
+                    <p className="mb-6 text-lg whitespace-pre-line">{summaryParts.p1 || "等待摘要生成..."}</p>
+                    
+                    {/* Image Insert */}
+                    <div className="my-8 flex justify-center">
+                      {activeTask.imageBlobUrl ? (
+                        <img 
+                          src={activeTask.imageBlobUrl} 
+                          alt="Infographic" 
+                          className="max-w-full rounded shadow-sm" 
+                          style={{ maxHeight: '500px', width: 'auto' }}
+                        />
+                      ) : (
+                        <div className="w-full h-48 bg-gray-100 border-2 border-dashed border-gray-300 rounded flex items-center justify-center text-gray-400">
+                          [此處將插入資訊圖表]
+                        </div>
+                      )}
+                    </div>
+
+                    {/* Para 2 */}
+                    <p className="mb-6 text-lg whitespace-pre-line">{summaryParts.p2}</p>
+                    
+                    {/* Source */}
+                    {activeTask.url && (
+                      <div className="text-sm text-gray-500 mt-8 pt-4 border-t">
+                        資料來源：<a href={activeTask.url} target="_blank" rel="noreferrer" className="text-blue-600 underline">原始新聞連結</a>
+                      </div>
+                    )}
+                  </div>
+                </div>
+
+                <div className="border-t border-orange-200 pt-4 mt-4">
+                  <p className="text-sm text-gray-600 mb-3">
+                    最後步驟：貼上 Substack 預覽連結完成任務
+                  </p>
+                  <input 
+                    type="text"
+                    className="w-full border rounded p-2 mb-4 text-sm focus:ring-2 focus:ring-orange-300 outline-none"
+                    placeholder="https://substack.com/..."
+                    value={activeTask.substackLink}
+                    onChange={(e) => updateTask(activeTask.id, { substackLink: e.target.value })}
+                  />
+                   {activeTask.status === 'review' && (
+                    <div className="flex justify-end">
+                      <Button 
+                         onClick={() => {
+                           updateTask(activeTask.id, { status: 'published' });
+                           setActiveTaskId(null); // 完成後關閉視窗
+                         }} 
+                         icon={Check}
+                         disabled={!activeTask.substackLink}
+                      >
+                        提交完成
+                      </Button>
+                    </div>
+                  )}
+                </div>
               </Card>
             </section>
 
-          </div>
-        </div>
-      </div>
-    );
-  };
-
-  const renderConfirmDialog = () => {
-    if (!confirmDialog.isOpen) return null;
-
-    const isArchive = confirmDialog.type === 'archive';
-
-    return (
-      <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-[60] p-4 backdrop-blur-sm animate-in fade-in duration-150">
-        <div className="bg-white rounded-xl shadow-2xl p-6 max-w-sm w-full transform scale-100 transition-all">
-          <div className="flex items-center text-amber-600 mb-4">
-            <AlertTriangle size={24} className="mr-3" />
-            <h3 className="text-lg font-bold">{isArchive ? '確定要歸檔嗎？' : '確定要刪除？'}</h3>
-          </div>
-          <p className="text-gray-600 mb-6 text-sm leading-relaxed">
-            {isArchive 
-              ? '這將會「清空」看板上的所有卡片，以便您開始製作新的一週內容。此動作無法復原。'
-              : '確定要刪除這張卡片嗎？此動作無法復原。'}
-          </p>
-          <div className="flex justify-end space-x-3">
-            <Button variant="ghost" onClick={() => setConfirmDialog({ isOpen: false, type: '', id: null })}>
-              取消
-            </Button>
-            <Button variant="danger" onClick={confirmAction}>
-              {isArchive ? '確認歸檔 (清空)' : '刪除'}
-            </Button>
           </div>
         </div>
       </div>
@@ -703,6 +793,36 @@ export default function App() {
     );
   };
 
+  const renderConfirmDialog = () => {
+    if (!confirmDialog.isOpen) return null;
+
+    const isArchive = confirmDialog.type === 'archive';
+
+    return (
+      <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-[60] p-4 backdrop-blur-sm animate-in fade-in duration-150">
+        <div className="bg-white rounded-xl shadow-2xl p-6 max-w-sm w-full transform scale-100 transition-all">
+          <div className="flex items-center text-amber-600 mb-4">
+            <AlertTriangle size={24} className="mr-3" />
+            <h3 className="text-lg font-bold">{isArchive ? '確定本週已完成？' : '確定要刪除？'}</h3>
+          </div>
+          <p className="text-gray-600 mb-6 text-sm leading-relaxed">
+            {isArchive 
+              ? '這將會「清空」看板上的所有卡片，代表本週工作已全數完成。此動作無法復原。'
+              : '確定要刪除這張卡片嗎？此動作無法復原。'}
+          </p>
+          <div className="flex justify-end space-x-3">
+            <Button variant="ghost" onClick={() => setConfirmDialog({ isOpen: false, type: '', id: null })}>
+              取消
+            </Button>
+            <Button variant="danger" onClick={confirmAction}>
+              {isArchive ? '確認完成 (清空)' : '刪除'}
+            </Button>
+          </div>
+        </div>
+      </div>
+    );
+  };
+
   const columns = [
     { id: 'inbox', title: '📥 點子庫', color: 'bg-gray-100' },
     { id: 'processing', title: '🤖 研究撰寫', color: 'bg-blue-50' },
@@ -719,7 +839,7 @@ export default function App() {
           <div className="flex items-center space-x-2">
             <FileText size={20} className="sm:w-6 sm:h-6" />
             <h1 className="text-lg sm:text-xl font-bold tracking-wide">內容農場 OS</h1>
-            <span className="hidden sm:inline text-xs opacity-70 font-normal ml-2">週報製作 v4.1</span>
+            <span className="hidden sm:inline text-xs opacity-70 font-normal ml-2">週報製作 v4.2</span>
           </div>
           <div className="flex items-center space-x-2">
             <Button 
@@ -735,8 +855,8 @@ export default function App() {
               icon={Archive} 
               className="text-xs sm:text-sm px-3 py-1.5 shadow-lg"
             >
-              <span className="hidden sm:inline">本週歸檔</span>
-              <span className="sm:hidden">歸檔</span>
+              <span className="hidden sm:inline">本週已完成</span>
+              <span className="sm:hidden">完成</span>
             </Button>
             <Button variant="secondary" onClick={() => setIsModalOpen(true)} icon={Plus} className="text-xs sm:text-sm px-3 py-1.5 sm:px-4 sm:py-2">
               新增
