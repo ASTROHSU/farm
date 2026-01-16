@@ -1,5 +1,16 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Plus, Copy, Check, ArrowRight, FileText, Image as ImageIcon, Share, Trash2, ExternalLink, Settings, X, AlignLeft, Archive, AlertTriangle, ClipboardPaste, Sparkles, Loader2, Key, Upload, LayoutTemplate, PlayCircle } from 'lucide-react';
+import { Plus, Copy, Check, ArrowRight, FileText, Trash2, ExternalLink, Settings, X, AlignLeft, Archive, AlertTriangle, ClipboardPaste, Sparkles, Loader2, Key, LayoutTemplate, PlayCircle, Upload, Image as ImageIcon } from 'lucide-react';
+import { initializeApp } from 'firebase/app';
+import { getAuth, signInAnonymously, onAuthStateChanged, signInWithCustomToken } from 'firebase/auth';
+import { getFirestore, collection, doc, addDoc, updateDoc, deleteDoc, onSnapshot, serverTimestamp, query } from 'firebase/firestore';
+
+// --- Firebase 初始化 ---
+// 環境變數由系統自動提供
+const firebaseConfig = JSON.parse(__firebase_config);
+const app = initializeApp(firebaseConfig);
+const auth = getAuth(app);
+const db = getFirestore(app);
+const appId = typeof __app_id !== 'undefined' ? __app_id : 'content-farm-os';
 
 // --- 配置與 Prompt 資料庫 ---
 const PROMPTS = {
@@ -76,78 +87,8 @@ const Button = ({ onClick, children, variant = "primary", className = "", icon: 
   );
 };
 
-// --- Google Sheets API Service (Placeholder) ---
-// 在此環境中移除 process.env 或 import.meta.env 的依賴
-const GOOGLE_SHEETS_API_URL = ''; 
-
-// 從 Google Sheets 讀取所有任務
-const fetchTasksFromSheets = async () => {
-  if (!GOOGLE_SHEETS_API_URL) {
-    // console.warn('⚠️ Google Sheets API URL 未設定，將使用本地儲存');
-    return null;
-  }
-  
-  console.log('📡 正在從 Google Sheets 讀取資料...');
-  
-  try {
-    const url = `${GOOGLE_SHEETS_API_URL}?t=${Date.now()}`;
-    const response = await fetch(url);
-    
-    if (!response.ok) {
-      throw new Error(`HTTP ${response.status}: ${response.statusText}`);
-    }
-    
-    const data = await response.json();
-    
-    if (data.error) {
-      console.error('❌ Google Sheets 錯誤:', data.error);
-      return null;
-    }
-    
-    const tasks = Array.isArray(data) ? data.filter(task => task.status !== 'archived') : null;
-    return tasks;
-  } catch (error) {
-    console.error('❌ 讀取 Google Sheets 失敗:', error);
-    return null;
-  }
-};
-
-// 同步任務到 Google Sheets
-const syncTaskToSheets = async (action, task) => {
-  if (!GOOGLE_SHEETS_API_URL) return { success: false, error: 'API URL 未設定' };
-  
-  try {
-    const payload = { action, task };
-    
-    const response = await fetch(GOOGLE_SHEETS_API_URL, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify(payload),
-    });
-    
-    if (!response.ok) {
-      const errorText = await response.text();
-      throw new Error(`HTTP ${response.status}: ${errorText}`);
-    }
-    
-    const result = await response.json();
-    
-    if (result.error) {
-      return { success: false, error: result.error };
-    }
-    
-    return { success: true, result };
-  } catch (error) {
-    console.error('❌ 同步到 Google Sheets 失敗:', error);
-    return { success: false, error: error.message };
-  }
-};
-
 const callOpenAIAPI = async (apiKey, systemPrompt, userContent) => {
   const userMessage = `請根據以下「Gemini 研究報告」內容進行撰寫：\n\n「\n${userContent}\n」`;
-  
   try {
     const response = await fetch('https://api.openai.com/v1/chat/completions', {
       method: 'POST',
@@ -164,7 +105,6 @@ const callOpenAIAPI = async (apiKey, systemPrompt, userContent) => {
         temperature: 0.7
       })
     });
-
     const data = await response.json();
     if (data.error) throw new Error(data.error.message);
     return data.choices[0].message.content;
@@ -174,11 +114,9 @@ const callOpenAIAPI = async (apiKey, systemPrompt, userContent) => {
   }
 };
 
-// --- Utility: Confetti Effect ---
 const triggerConfetti = () => {
   const colors = ['#ff595e', '#ffca3a', '#8ac926', '#1982c4', '#6a4c93'];
   const confettiCount = 150;
-  
   for (let i = 0; i < confettiCount; i++) {
     const el = document.createElement('div');
     el.style.position = 'fixed';
@@ -190,37 +128,29 @@ const triggerConfetti = () => {
     el.style.zIndex = '9999';
     el.style.pointerEvents = 'none';
     el.style.borderRadius = '2px';
-    
-    // Random physics
     const angle = Math.random() * Math.PI * 2;
     const velocity = 8 + Math.random() * 12;
     const dx = Math.cos(angle) * velocity;
     const dy = Math.sin(angle) * velocity;
-    
     document.body.appendChild(el);
-
     let x = 0;
     let y = 0;
     let currentDx = dx;
     let currentDy = dy;
     let rotation = Math.random() * 360;
-    
     const animate = () => {
       x += currentDx;
       y += currentDy;
-      currentDy += 0.5; // Gravity
+      currentDy += 0.5;
       rotation += 10;
-      
       el.style.transform = `translate(calc(-50% + ${x}px), calc(-50% + ${y}px)) rotate(${rotation}deg)`;
       el.style.opacity = 1 - (Math.abs(y) / (window.innerHeight / 1.2));
-      
       if (y < window.innerHeight && el.style.opacity > 0) {
         requestAnimationFrame(animate);
       } else {
         el.remove();
       }
     };
-    
     animate();
   }
 };
@@ -228,22 +158,19 @@ const triggerConfetti = () => {
 // --- 主應用程式 ---
 
 export default function App() {
+  const [user, setUser] = useState(null);
   const [tasks, setTasks] = useState([]);
   const [isLoadingTasks, setIsLoadingTasks] = useState(true);
-
   const [apiKeys, setApiKeys] = useState(() => {
     try {
       const saved = localStorage.getItem('content-farm-api-keys');
-      if (saved) {
-        return JSON.parse(saved);
-      }
+      if (saved) return JSON.parse(saved);
       return { openai: '' };
     } catch (e) {
       return { openai: '' };
     }
   });
 
-  // 取得 API Key
   const getOpenAIKey = () => {
     return apiKeys.openai || '';
   };
@@ -252,23 +179,74 @@ export default function App() {
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [activeTaskId, setActiveTaskId] = useState(null);
   const [confirmDialog, setConfirmDialog] = useState({ isOpen: false, type: '', id: null });
-  
   const [isGeneratingGPT, setIsGeneratingGPT] = useState(false);
-  const [syncStatus, setSyncStatus] = useState({ lastSync: null, error: null, testing: false });
-
   const substackPreviewRef = useRef(null);
   const wizardScrollRef = useRef(null);
   const [modalHeight, setModalHeight] = useState('90vh');
 
   const activeTask = tasks.find(t => t.id === activeTaskId);
 
-  // 當打開卡片時，自動捲動到當前步驟
+  // --- Firebase Auth & Data Sync ---
+  useEffect(() => {
+    // 1. 初始化登入
+    const initAuth = async () => {
+      if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
+        await signInWithCustomToken(auth, __initial_auth_token);
+      } else {
+        await signInAnonymously(auth);
+      }
+    };
+    initAuth();
+
+    // 2. 監聽登入狀態
+    const unsubscribeAuth = onAuthStateChanged(auth, (currentUser) => {
+      setUser(currentUser);
+    });
+
+    return () => unsubscribeAuth();
+  }, []);
+
+  // 3. 監聽資料庫變更 (當 user 存在時)
+  useEffect(() => {
+    if (!user) return;
+
+    // 使用 Public Data Path 以支援多人協作
+    const tasksRef = collection(db, 'artifacts', appId, 'public', 'data', 'tasks');
+    // 使用簡單查詢，避免需要建立索引
+    const q = query(tasksRef);
+
+    const unsubscribe = onSnapshot(q, (snapshot) => {
+      const loadedTasks = snapshot.docs.map(doc => ({
+        id: doc.id,
+        ...doc.data()
+      }));
+      
+      // 在前端進行排序 (Client-side sorting)
+      // 過濾掉已歸檔 (archived) 的任務，並按建立時間排序
+      const visibleTasks = loadedTasks
+        .filter(t => t.status !== 'archived')
+        .sort((a, b) => {
+          const timeA = new Date(a.created_at).getTime();
+          const timeB = new Date(b.created_at).getTime();
+          return timeB - timeA; // 新的在前面
+        });
+        
+      setTasks(visibleTasks);
+      setIsLoadingTasks(false);
+    }, (error) => {
+      console.error("Firestore Error:", error);
+      setIsLoadingTasks(false);
+    });
+
+    return () => unsubscribe();
+  }, [user]);
+
+  // --- 畫面效果邏輯 ---
+  
   useEffect(() => {
     if (activeTask && wizardScrollRef.current) {
       setTimeout(() => {
-        // 如果是已完成 (done) 的任務，不進行捲動，維持在頂端
         if (activeTask.status === 'done') return;
-
         const stepId = `step-${activeTask.step}`;
         const element = document.getElementById(stepId);
         if (element) {
@@ -276,9 +254,8 @@ export default function App() {
         }
       }, 100);
     }
-  }, [activeTaskId]); 
+  }, [activeTaskId]);
 
-  // 動態計算視窗高度
   useEffect(() => {
     const updateHeight = () => {
       const isMobile = window.innerWidth <= 768;
@@ -288,66 +265,14 @@ export default function App() {
         setModalHeight('90vh');
       }
     };
-
     updateHeight();
     window.addEventListener('resize', updateHeight);
     window.addEventListener('orientationchange', updateHeight);
-    
     return () => {
       window.removeEventListener('resize', updateHeight);
       window.removeEventListener('orientationchange', updateHeight);
     };
   }, []);
-
-  // 載入任務
-  useEffect(() => {
-    const loadTasks = async () => {
-      setIsLoadingTasks(true);
-      
-      const sheetsTasks = await fetchTasksFromSheets();
-      
-      if (sheetsTasks && sheetsTasks.length > 0) {
-        setTasks(sheetsTasks);
-        localStorage.setItem('content-farm-tasks', JSON.stringify(sheetsTasks));
-      } else {
-        try {
-          const saved = localStorage.getItem('content-farm-tasks');
-          if (saved) {
-            const parsed = JSON.parse(saved);
-            // 遷移舊資料結構
-            const migrated = parsed.map(t => {
-               if (t.step) return t;
-               let newStatus = 'todo';
-               let newStep = 1;
-               if (t.status === 'inbox') { newStatus = 'todo'; newStep = 1; }
-               else if (t.status === 'processing') { newStatus = 'in_progress'; newStep = 2; }
-               else if (t.status === 'visuals') { newStatus = 'in_progress'; newStep = 3; }
-               else if (t.status === 'review') { newStatus = 'in_progress'; newStep = 4; }
-               else if (t.status === 'published' || t.status === 'done') { newStatus = 'done'; newStep = 4; }
-               return { ...t, status: newStatus, step: newStep };
-            });
-            setTasks(migrated);
-          } else {
-            setTasks([
-              { id: 1, title: '範例：SEC 起訴 Coinbase', status: 'todo', step: 1, url: 'https://example.com', content: '這裡是一段範例的原始文字內容...', geminiReport: '', summary: '', substackLink: '', created_at: new Date().toISOString() },
-            ]);
-          }
-        } catch (e) {
-          setTasks([]);
-        }
-      }
-      
-      setIsLoadingTasks(false);
-    };
-    
-    loadTasks();
-  }, []);
-
-  useEffect(() => {
-    if (tasks.length > 0) {
-      localStorage.setItem('content-farm-tasks', JSON.stringify(tasks));
-    }
-  }, [tasks]);
 
   useEffect(() => {
     localStorage.setItem('content-farm-api-keys', JSON.stringify(apiKeys));
@@ -367,8 +292,10 @@ export default function App() {
     setFavicon();
   }, []);
 
+  // --- CRUD Operations (Firestore) ---
+
   const addTask = async (rawContent) => {
-    if (!rawContent.trim()) return;
+    if (!rawContent.trim() || !user) return;
 
     const firstLine = rawContent.trim().split('\n')[0];
     const title = firstLine.length > 30 ? firstLine.substring(0, 30) + '...' : firstLine;
@@ -376,7 +303,6 @@ export default function App() {
     const url = urlMatch ? urlMatch[0] : '';
 
     const newTask = {
-      id: Date.now(),
       title,
       url,
       content: rawContent,
@@ -389,43 +315,37 @@ export default function App() {
       substackLink: ''
     };
     
-    setTasks([newTask, ...tasks]);
-    setIsModalOpen(false);
-    
-    await syncTaskToSheets('create', newTask);
+    // 寫入 Firestore
+    try {
+      await addDoc(collection(db, 'artifacts', appId, 'public', 'data', 'tasks'), newTask);
+      setIsModalOpen(false);
+    } catch (e) {
+      console.error("Error adding task: ", e);
+      alert("新增失敗，請檢查網路連線");
+    }
   };
 
   const updateTask = async (id, updates) => {
-    setTasks(prevTasks => {
-      const updated = prevTasks.map(t => {
-        if (t.id === id) {
-          const updatedTask = { ...t, ...updates };
-          syncTaskToSheets('update', updatedTask);
-          return updatedTask;
-        }
-        return t;
-      });
-      return updated;
-    });
+    if (!user) return;
+    try {
+      const taskRef = doc(db, 'artifacts', appId, 'public', 'data', 'tasks', id);
+      await updateDoc(taskRef, updates);
+    } catch (e) {
+      console.error("Error updating task: ", e);
+    }
   };
 
   const handleNextStep = (task, nextStepData = {}) => {
     const currentStep = task.step;
     let nextUpdates = { ...nextStepData };
-
     if (currentStep === 1) {
-      // Step 1 -> Step 2
       nextUpdates = { ...nextUpdates, step: 2, status: 'in_progress' };
     } else if (currentStep === 2) {
-      // Step 2 -> Step 3
       nextUpdates = { ...nextUpdates, step: 3 };
     } else if (currentStep === 3) {
-      // Step 3 -> Step 4
       nextUpdates = { ...nextUpdates, step: 4 };
     }
-    
     updateTask(task.id, nextUpdates);
-    
     setTimeout(() => {
         const nextStepElement = document.getElementById(`step-${currentStep + 1}`);
         if (nextStepElement) {
@@ -451,17 +371,31 @@ export default function App() {
   };
 
   const confirmAction = async () => {
+    if (!user) return;
+
     if (confirmDialog.type === 'delete') {
-      setTasks(prev => prev.filter(t => t.id !== confirmDialog.id));
-      if (activeTaskId === confirmDialog.id) setActiveTaskId(null);
+      try {
+        await deleteDoc(doc(db, 'artifacts', appId, 'public', 'data', 'tasks', confirmDialog.id));
+        if (activeTaskId === confirmDialog.id) setActiveTaskId(null);
+      } catch (e) {
+        console.error("Delete failed", e);
+      }
     } else if (confirmDialog.type === 'archive') {
+      // 歸檔邏輯：將所有 status !== 'archived' 的任務更新為 'archived'
+      // 為了批次處理，這裡使用 Promise.all
+      const activeTasks = tasks.filter(t => t.status !== 'archived');
       const now = new Date().toISOString();
-      setTasks(prevTasks => {
-        const archived = prevTasks.map(t => ({ ...t, status: 'archived', completed_at: now }));
-        syncTaskToSheets('archive', { tasks: archived });
-        return [];
-      });
-      setActiveTaskId(null);
+      
+      try {
+        await Promise.all(activeTasks.map(task => {
+          const taskRef = doc(db, 'artifacts', appId, 'public', 'data', 'tasks', task.id);
+          return updateDoc(taskRef, { status: 'archived', completed_at: now });
+        }));
+        setActiveTaskId(null);
+      } catch (e) {
+        console.error("Archive failed", e);
+        alert("歸檔失敗，請重試");
+      }
     }
     setConfirmDialog({ isOpen: false, type: '', id: null });
   };
@@ -474,15 +408,11 @@ export default function App() {
       window.getSelection().addRange(range);
       try {
         document.execCommand('copy');
-        
         triggerConfetti();
-
         updateTask(activeTask.id, { status: 'done', step: 4 }); 
-        
         setTimeout(() => {
           setActiveTaskId(null);
         }, 500);
-        
         return 'copied';
       } catch (err) {
         alert("複製失敗，請手動選取內容複製。");
@@ -498,7 +428,6 @@ export default function App() {
       setIsSettingsOpen(true);
       return;
     }
-    
     setIsGeneratingGPT(true);
     try {
       const result = await callOpenAIAPI(apiKey, PROMPTS.chatgpt_role, activeTask.geminiReport);
@@ -894,9 +823,7 @@ export default function App() {
               <span className="hidden sm:inline">本週已完成</span>
               <span className="sm:hidden">完成</span>
             </Button>
-            <Button variant="secondary" onClick={() => setIsModalOpen(true)} icon={Plus} className="text-xs sm:text-sm px-3 py-1.5 sm:px-4 sm:py-2">
-              新增
-            </Button>
+            
           </div>
         </div>
       </header>
@@ -906,12 +833,22 @@ export default function App() {
         <div className="flex flex-col md:flex-row md:space-x-4 space-y-4 md:space-y-0 md:overflow-x-auto pb-4">
           {columns.map(col => (
             <div key={col.id} className={`flex-1 rounded-xl p-3 sm:p-4 ${col.color} min-w-full md:min-w-[300px] md:flex-shrink-0 transition-all`}>
-              <h3 className="font-bold text-slate-700 mb-3 sm:mb-4 flex items-center justify-between">
-                {col.title}
-                <span className="bg-white/50 px-2 py-1 rounded text-xs font-mono">
-                  {tasks.filter(t => t.status === col.id).length}
-                </span>
-              </h3>
+              <div className="flex items-center justify-between mb-3 sm:mb-4 min-h-[32px]">
+                 <h3 className="font-bold text-slate-700 flex items-center">
+                    {col.title}
+                    <span className="bg-white/50 px-2 py-1 rounded text-xs font-mono ml-2">
+                      {tasks.filter(t => t.status === col.id).length}
+                    </span>
+                 </h3>
+                 {col.id === 'todo' && (
+                    <button
+                      onClick={() => setIsModalOpen(true)}
+                      className="flex items-center justify-center px-3 py-1.5 bg-white text-slate-700 text-xs font-bold rounded-md shadow-sm hover:bg-blue-50 hover:text-blue-600 transition-colors border border-slate-200"
+                    >
+                      <Plus size={14} className="mr-1" /> 新增
+                    </button>
+                 )}
+              </div>
               
               <div className="space-y-3">
                 {tasks.filter(t => t.status === col.id).map(task => (
