@@ -246,37 +246,50 @@ export default function App() {
   useEffect(() => {
     if (!isFirebaseConfigured || !user || !db) return;
 
-    try {
     // 使用簡單的路徑結構
     const tasksRef = collection(db, 'tasks');
     const q = query(tasksRef);
 
-    const unsubscribe = onSnapshot(q, (snapshot) => {
-      const loadedTasks = snapshot.docs.map(doc => {
-        const data = doc.data();
-        return {
-          id: doc.id,
-          ...data,
-          // 處理 Firestore Timestamp
-          created_at: data.created_at?.toDate?.()?.toISOString() || data.created_at || new Date().toISOString()
-        };
-      });
-      
-      // 過濾掉已歸檔的任務，並按建立時間排序
-      const visibleTasks = loadedTasks
-        .filter(t => t.status !== 'archived')
-        .sort((a, b) => {
-          const timeA = new Date(a.created_at).getTime();
-          const timeB = new Date(b.created_at).getTime();
-          return timeB - timeA; // 新的在前面
+    const unsubscribe = onSnapshot(
+      q,
+      (snapshot) => {
+        const loadedTasks = snapshot.docs.map(doc => {
+          const data = doc.data();
+          return {
+            id: doc.id,
+            ...data,
+            // 處理 Firestore Timestamp
+            created_at: data.created_at?.toDate?.()?.toISOString() || data.created_at || new Date().toISOString()
+          };
         });
         
-      setTasks(visibleTasks);
-      setIsLoadingTasks(false);
-    }, (error) => {
-      console.error("❌ Firestore Error:", error);
-      setIsLoadingTasks(false);
-    });
+        // 過濾掉已歸檔的任務，並按建立時間排序
+        const visibleTasks = loadedTasks
+          .filter(t => t.status !== 'archived')
+          .sort((a, b) => {
+            const timeA = new Date(a.created_at).getTime();
+            const timeB = new Date(b.created_at).getTime();
+            return timeB - timeA; // 新的在前面
+          });
+          
+        setTasks(visibleTasks);
+        setIsLoadingTasks(false);
+      },
+      (error) => {
+        console.error("❌ Firestore Error:", error);
+        setIsLoadingTasks(false);
+        // 錯誤時降級到本地儲存
+        try {
+          const saved = localStorage.getItem('content-farm-tasks');
+          if (saved) {
+            const parsed = JSON.parse(saved);
+            setTasks(parsed);
+          }
+        } catch (e) {
+          console.error("讀取本地儲存失敗:", e);
+        }
+      }
+    );
 
     return () => unsubscribe();
   }, [user]);
