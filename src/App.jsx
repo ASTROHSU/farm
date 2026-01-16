@@ -17,14 +17,35 @@ const firebaseConfig = {
 // 檢查 Firebase 配置是否完整
 const isFirebaseConfigured = firebaseConfig.apiKey && firebaseConfig.projectId;
 
+// 調試：檢查配置
+if (isFirebaseConfigured) {
+  console.log('🔧 Firebase 配置檢查:', {
+    hasApiKey: !!firebaseConfig.apiKey,
+    hasProjectId: !!firebaseConfig.projectId,
+    hasAuthDomain: !!firebaseConfig.authDomain,
+    projectId: firebaseConfig.projectId
+  });
+} else {
+  console.warn('⚠️ Firebase 未配置，缺少:', {
+    apiKey: !firebaseConfig.apiKey,
+    projectId: !firebaseConfig.projectId
+  });
+}
+
 let app, auth, db;
 if (isFirebaseConfigured) {
   try {
     app = initializeApp(firebaseConfig);
     auth = getAuth(app);
     db = getFirestore(app);
+    console.log('✅ Firebase 初始化成功');
   } catch (error) {
-    console.error('Firebase 初始化失敗:', error);
+    console.error('❌ Firebase 初始化失敗:', error);
+    console.error('錯誤詳情:', {
+      message: error.message,
+      code: error.code,
+      stack: error.stack
+    });
   }
 }
 
@@ -221,25 +242,50 @@ export default function App() {
       return;
     }
 
+    // 檢查 auth 和 db 是否已初始化
+    if (!auth || !db) {
+      console.error('❌ Firebase auth 或 db 未初始化', { auth: !!auth, db: !!db });
+      return;
+    }
+
     // 1. 初始化登入
     const initAuth = async () => {
       try {
-        await signInAnonymously(auth);
+        console.log('🔐 開始 Firebase 匿名登入...');
+        const userCredential = await signInAnonymously(auth);
+        console.log('✅ Firebase 匿名登入成功:', userCredential.user.uid);
       } catch (error) {
-        console.error('Firebase 匿名登入失敗:', error);
+        console.error('❌ Firebase 匿名登入失敗:', error);
+        console.error('錯誤詳情:', {
+          code: error.code,
+          message: error.message,
+          stack: error.stack
+        });
+        // 顯示用戶友好的錯誤訊息
+        if (error.code === 'auth/operation-not-allowed') {
+          console.error('💡 提示: 請在 Firebase Console 啟用匿名登入功能');
+        }
       }
     };
     initAuth();
 
     // 2. 監聽登入狀態
     const unsubscribeAuth = onAuthStateChanged(auth, (currentUser) => {
+      console.log('🔔 Firebase 登入狀態變更:', currentUser ? `已登入 (${currentUser.uid})` : '未登入');
       setUser(currentUser);
       if (currentUser) {
         console.log('✅ Firebase 登入成功:', currentUser.uid);
+      } else {
+        console.warn('⚠️ Firebase 使用者為 null，可能登入尚未完成或失敗');
       }
+    }, (error) => {
+      console.error('❌ Firebase 登入狀態監聽錯誤:', error);
     });
 
-    return () => unsubscribeAuth();
+    return () => {
+      console.log('🧹 清理 Firebase 登入監聽器');
+      unsubscribeAuth();
+    };
   }, []);
 
   // 3. 監聽資料庫變更 (當 user 存在時)
@@ -384,26 +430,61 @@ export default function App() {
       substackLink: ''
     };
     
+    // 檢查 Firebase 狀態
+    console.log('📝 準備新增任務，Firebase 狀態:', {
+      isFirebaseConfigured,
+      hasUser: !!user,
+      hasDb: !!db,
+      userId: user?.uid
+    });
+    
+    // 如果 Firebase 已配置但未登入，顯示提示並等待
+    if (isFirebaseConfigured && !user) {
+      console.warn('⚠️ Firebase 已配置但使用者未登入');
+      console.warn('💡 提示: 請檢查瀏覽器 Console 是否有 Firebase 登入錯誤');
+      console.warn('💡 可能原因:');
+      console.warn('   1. Firebase 匿名登入未啟用');
+      console.warn('   2. Firestore 安全規則不允許寫入');
+      console.warn('   3. 網路連線問題');
+      alert('Firebase 登入尚未完成，請稍候再試。\n\n如果問題持續，請檢查瀏覽器 Console 的錯誤訊息。');
+      return; // 不新增任務，等待 Firebase 登入完成
+    }
+    
     // 如果 Firebase 已配置且已登入，同步到 Firestore
     if (isFirebaseConfigured && user && db) {
       try {
+        console.log('🔥 正在同步任務到 Firebase...');
         const tasksRef = collection(db, 'tasks');
-        await addDoc(tasksRef, {
+        const docRef = await addDoc(tasksRef, {
           ...newTask,
           created_at: serverTimestamp()
         });
-        console.log("✅ Task added to Firebase");
+        console.log("✅ Task added to Firebase with ID:", docRef.id);
         setIsModalOpen(false);
         // Firebase 會透過 onSnapshot 自動更新 tasks state
         return;
       } catch (e) {
         console.error("❌ Error adding task to Firebase: ", e);
-        alert("同步到 Firebase 失敗，已儲存到本地");
+        console.error("錯誤詳情:", {
+          code: e.code,
+          message: e.message,
+          stack: e.stack
+        });
+        
+        // 根據錯誤類型提供更詳細的提示
+        let errorMessage = `同步到 Firebase 失敗: ${e.message}`;
+        if (e.code === 'permission-denied') {
+          errorMessage += '\n\n💡 提示: 請檢查 Firestore 安全規則是否允許寫入';
+        } else if (e.code === 'unavailable') {
+          errorMessage += '\n\n💡 提示: Firestore 服務暫時不可用，請稍後再試';
+        }
+        
+        alert(errorMessage + '\n\n已儲存到本地');
         // 失敗時降級到本地儲存
       }
     }
 
-    // 使用本地儲存（Firebase 未配置、未登入或同步失敗時）
+    // 使用本地儲存（Firebase 未配置或同步失敗時）
     console.log("💾 Saving task to local storage");
     setTasks(prev => [newTask, ...prev]);
     setIsModalOpen(false);
