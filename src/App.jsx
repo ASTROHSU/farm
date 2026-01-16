@@ -294,6 +294,17 @@ export default function App() {
     return () => unsubscribe();
   }, [user]);
 
+  // 同步任務到本地儲存（作為備份，僅在 Firebase 未配置時）
+  useEffect(() => {
+    if (!isFirebaseConfigured && tasks.length > 0) {
+      try {
+        localStorage.setItem('content-farm-tasks', JSON.stringify(tasks));
+      } catch (e) {
+        console.error('儲存到本地失敗:', e);
+      }
+    }
+  }, [tasks, isFirebaseConfigured]);
+
   // --- 畫面效果邏輯 ---
   
   useEffect(() => {
@@ -348,11 +359,8 @@ export default function App() {
   // --- CRUD Operations (Firestore) ---
 
   const addTask = async (rawContent) => {
-    if (!rawContent.trim()) return;
-    
-    // 如果 Firebase 未配置，需要 user 才能繼續（但實際上會使用本地儲存）
-    if (isFirebaseConfigured && !user) {
-      console.warn('等待 Firebase 登入...');
+    if (!rawContent.trim()) {
+      console.warn('內容為空，無法新增任務');
       return;
     }
 
@@ -361,7 +369,9 @@ export default function App() {
     const urlMatch = rawContent.match(/(https?:\/\/[^\s]+)/);
     const url = urlMatch ? urlMatch[0] : '';
 
+    const taskId = Date.now().toString();
     const newTask = {
+      id: taskId,
       title,
       url,
       content: rawContent,
@@ -393,7 +403,8 @@ export default function App() {
       }
     }
 
-    // 使用本地儲存（Firebase 未配置或同步失敗時）
+    // 使用本地儲存（Firebase 未配置、未登入或同步失敗時）
+    console.log("💾 Saving task to local storage");
     setTasks(prev => [newTask, ...prev]);
     setIsModalOpen(false);
   };
