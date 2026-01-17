@@ -1,59 +1,19 @@
-import React, { useState, useEffect, useRef } from 'react';
-import { Plus, Copy, Check, ArrowRight, FileText, Trash2, ExternalLink, Settings, X, AlignLeft, Archive, AlertTriangle, ClipboardPaste, Sparkles, Loader2, Key, LayoutTemplate, PlayCircle, Upload, Image as ImageIcon } from 'lucide-react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
+import { Plus, Copy, Check, ArrowRight, FileText, Trash2, ExternalLink, Settings, X, AlignLeft, Archive, AlertTriangle, ClipboardPaste, Sparkles, Loader2, Key, LayoutTemplate, PlayCircle, Upload, Image as ImageIcon, Save } from 'lucide-react';
 import { initializeApp } from 'firebase/app';
 import { getAuth, signInAnonymously, onAuthStateChanged, signInWithCustomToken } from 'firebase/auth';
 import { getFirestore, collection, doc, addDoc, updateDoc, deleteDoc, onSnapshot, serverTimestamp, query } from 'firebase/firestore';
+import { debounce } from 'lodash';
 
 // --- Firebase 初始化 ---
-const firebaseConfig = {
-  apiKey: import.meta.env.VITE_FIREBASE_API_KEY,
-  authDomain: import.meta.env.VITE_FIREBASE_AUTH_DOMAIN,
-  projectId: import.meta.env.VITE_FIREBASE_PROJECT_ID,
-  storageBucket: import.meta.env.VITE_FIREBASE_STORAGE_BUCKET,
-  messagingSenderId: import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID,
-  appId: import.meta.env.VITE_FIREBASE_APP_ID
-};
-
-// 檢查 Firebase 配置是否完整
-const isFirebaseConfigured = firebaseConfig.apiKey && firebaseConfig.projectId;
-
-// 調試：檢查配置
-if (isFirebaseConfigured) {
-  console.log('🔧 Firebase 配置檢查:', {
-    hasApiKey: !!firebaseConfig.apiKey,
-    hasProjectId: !!firebaseConfig.projectId,
-    hasAuthDomain: !!firebaseConfig.authDomain,
-    projectId: firebaseConfig.projectId
-  });
-} else {
-  console.warn('⚠️ Firebase 未配置，缺少:', {
-    apiKey: !firebaseConfig.apiKey,
-    projectId: !firebaseConfig.projectId
-  });
-}
-
-let app, auth, db;
-if (isFirebaseConfigured) {
-  try {
-    app = initializeApp(firebaseConfig);
-    auth = getAuth(app);
-    db = getFirestore(app);
-    console.log('✅ Firebase 初始化成功');
-  } catch (error) {
-    console.error('❌ Firebase 初始化失敗:', error);
-    console.error('錯誤詳情:', {
-      message: error.message,
-      code: error.code,
-      stack: error.stack
-    });
-  }
-}
-
-const appId = 'content-farm-os';
+const firebaseConfig = JSON.parse(__firebase_config);
+const app = initializeApp(firebaseConfig);
+const auth = getAuth(app);
+const db = getFirestore(app);
+const appId = typeof __app_id !== 'undefined' ? __app_id : 'content-farm-os-default';
 
 // --- 配置與 Prompt 資料庫 ---
 const PROMPTS = {
-  // 修改：還原為原始的研究指令
   gemini: `請你替我研究這個主題並以繁體中文製作報告，內容包含目前的發展進度是什麼、為什麼會發生這件事（為什麼會做這個決定），以及這件事會對未來產生什麼影響？還有，我也想知道網路上有哪些人對這起事件有哪些正面和反面的論點？他們說了什麼、為什麼這樣說？`,
   
   chatgpt_role: `# Role
@@ -95,12 +55,10 @@ const Badge = ({ children, color = "blue" }) => {
   );
 };
 
-// 修改 Button 組件以支援暫時性文字變化 (Copied feedback)
 const Button = ({ onClick, children, variant = "primary", className = "", icon: Icon, disabled = false, loading = false }) => {
   const [feedback, setFeedback] = useState(null);
   
   const handleClick = async (e) => {
-    // 攔截 onClick 來處理複製回饋，如果 onClick 回傳 "copied"，則顯示回饋
     const result = await onClick(e);
     if (result === 'copied') {
       setFeedback('已複製！');
@@ -125,6 +83,41 @@ const Button = ({ onClick, children, variant = "primary", className = "", icon: 
     </button>
   );
 };
+
+// --- 優化版 Textarea：自動儲存與本地狀態 ---
+const AutoSaveTextarea = ({ value, onChange, placeholder, className, minHeight = "h-32" }) => {
+  const [localValue, setLocalValue] = useState(value || '');
+  
+  // 當外部 value 改變時（例如從 DB 載入），更新本地狀態
+  useEffect(() => {
+    if (value !== undefined) {
+      setLocalValue(value);
+    }
+  }, [value]);
+
+  const handleChange = (e) => {
+    setLocalValue(e.target.value);
+  };
+
+  const handleBlur = () => {
+    // 失去焦點時才觸發儲存，避免頻繁寫入 DB
+    if (localValue !== value) {
+      onChange(localValue);
+    }
+  };
+
+  return (
+    <textarea
+      className={`${className} ${minHeight}`}
+      placeholder={placeholder}
+      value={localValue}
+      onChange={handleChange}
+      onBlur={handleBlur} // 關鍵：失去焦點時儲存
+    />
+  );
+};
+
+// --- API Service ---
 
 const callOpenAIAPI = async (apiKey, systemPrompt, userContent) => {
   const userMessage = `請根據以下「Gemini 研究報告」內容進行撰寫：\n\n「\n${userContent}\n」`;
@@ -199,7 +192,6 @@ const triggerConfetti = () => {
 export default function App() {
   const [user, setUser] = useState(null);
   const [tasks, setTasks] = useState([]);
-  const [isLoadingTasks, setIsLoadingTasks] = useState(true);
   const [apiKeys, setApiKeys] = useState(() => {
     try {
       const saved = localStorage.getItem('content-farm-api-keys');
@@ -219,6 +211,10 @@ export default function App() {
   const [activeTaskId, setActiveTaskId] = useState(null);
   const [confirmDialog, setConfirmDialog] = useState({ isOpen: false, type: '', id: null });
   const [isGeneratingGPT, setIsGeneratingGPT] = useState(false);
+  
+  // 新增：儲存狀態指示
+  const [isSaving, setIsSaving] = useState(false);
+
   const substackPreviewRef = useRef(null);
   const wizardScrollRef = useRef(null);
   const [modalHeight, setModalHeight] = useState('90vh');
@@ -227,132 +223,48 @@ export default function App() {
 
   // --- Firebase Auth & Data Sync ---
   useEffect(() => {
-    if (!isFirebaseConfigured) {
-      // 如果 Firebase 未配置，使用本地儲存
-      console.log('⚠️ Firebase 未配置，使用本地儲存');
-      try {
-        const saved = localStorage.getItem('content-farm-tasks');
-        if (saved) {
-          const parsed = JSON.parse(saved);
-          setTasks(parsed);
-        }
-      } catch (e) {
-        console.error('讀取本地儲存失敗:', e);
-      }
-      return;
-    }
-
-    // 檢查 auth 和 db 是否已初始化
-    if (!auth || !db) {
-      console.error('❌ Firebase auth 或 db 未初始化', { auth: !!auth, db: !!db });
-      return;
-    }
-
-    // 1. 初始化登入
     const initAuth = async () => {
-      try {
-        console.log('🔐 開始 Firebase 匿名登入...');
-        const userCredential = await signInAnonymously(auth);
-        console.log('✅ Firebase 匿名登入成功:', userCredential.user.uid);
-      } catch (error) {
-        console.error('❌ Firebase 匿名登入失敗:', error);
-        console.error('錯誤詳情:', {
-          code: error.code,
-          message: error.message,
-          stack: error.stack
-        });
-        // 顯示用戶友好的錯誤訊息
-        if (error.code === 'auth/operation-not-allowed') {
-          console.error('💡 提示: 請在 Firebase Console 啟用匿名登入功能');
-        }
+      if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
+        await signInWithCustomToken(auth, __initial_auth_token);
+      } else {
+        await signInAnonymously(auth);
       }
     };
     initAuth();
 
-    // 2. 監聽登入狀態
     const unsubscribeAuth = onAuthStateChanged(auth, (currentUser) => {
-      console.log('🔔 Firebase 登入狀態變更:', currentUser ? `已登入 (${currentUser.uid})` : '未登入');
       setUser(currentUser);
-      if (currentUser) {
-        console.log('✅ Firebase 登入成功:', currentUser.uid);
-      } else {
-        console.warn('⚠️ Firebase 使用者為 null，可能登入尚未完成或失敗');
-      }
-    }, (error) => {
-      console.error('❌ Firebase 登入狀態監聽錯誤:', error);
     });
-
-    return () => {
-      console.log('🧹 清理 Firebase 登入監聽器');
-      unsubscribeAuth();
-    };
+    return () => unsubscribeAuth();
   }, []);
 
-  // 3. 監聽資料庫變更 (當 user 存在時)
   useEffect(() => {
-    if (!isFirebaseConfigured || !user || !db) return;
-
-    // 使用簡單的路徑結構
-    const tasksRef = collection(db, 'tasks');
+    if (!user) return;
+    
+    const tasksRef = collection(db, 'artifacts', appId, 'public', 'data', 'tasks');
     const q = query(tasksRef);
 
-    const unsubscribe = onSnapshot(
-      q,
-      (snapshot) => {
-        const loadedTasks = snapshot.docs.map(doc => {
-          const data = doc.data();
-          return {
+    const unsubscribe = onSnapshot(q, (snapshot) => {
+      const loadedTasks = snapshot.docs.map(doc => {
+        const data = doc.data();
+        return {
             id: doc.id,
             ...data,
-            // 處理 Firestore Timestamp
             created_at: data.created_at?.toDate?.()?.toISOString() || data.created_at || new Date().toISOString()
-          };
-        });
-        
-        // 過濾掉已歸檔的任務，並按建立時間排序
-        const visibleTasks = loadedTasks
-          .filter(t => t.status !== 'archived')
-          .sort((a, b) => {
-            const timeA = new Date(a.created_at).getTime();
-            const timeB = new Date(b.created_at).getTime();
-            return timeB - timeA; // 新的在前面
-          });
-          
-        setTasks(visibleTasks);
-        setIsLoadingTasks(false);
-      },
-      (error) => {
-        console.error("❌ Firestore Error:", error);
-        setIsLoadingTasks(false);
-        // 錯誤時降級到本地儲存
-        try {
-          const saved = localStorage.getItem('content-farm-tasks');
-          if (saved) {
-            const parsed = JSON.parse(saved);
-            setTasks(parsed);
-          }
-        } catch (e) {
-          console.error("讀取本地儲存失敗:", e);
-        }
-      }
-    );
+        };
+      });
+      
+      const visibleTasks = loadedTasks
+        .filter(t => t.status !== 'archived')
+        .sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
+
+      setTasks(visibleTasks);
+    });
 
     return () => unsubscribe();
   }, [user]);
 
-  // 同步任務到本地儲存（作為備份，僅在 Firebase 未配置時）
-  useEffect(() => {
-    if (!isFirebaseConfigured && tasks.length > 0) {
-      try {
-        localStorage.setItem('content-farm-tasks', JSON.stringify(tasks));
-      } catch (e) {
-        console.error('儲存到本地失敗:', e);
-      }
-    }
-  }, [tasks, isFirebaseConfigured]);
-
-  // --- 畫面效果邏輯 ---
-  
+  // --- 畫面效果 ---
   useEffect(() => {
     if (activeTask && wizardScrollRef.current) {
       setTimeout(() => {
@@ -402,22 +314,16 @@ export default function App() {
     setFavicon();
   }, []);
 
-  // --- CRUD Operations (Firestore) ---
-
+  // --- CRUD Operations ---
   const addTask = async (rawContent) => {
-    if (!rawContent.trim()) {
-      console.warn('內容為空，無法新增任務');
-      return;
-    }
+    if (!rawContent.trim() || !user) return;
 
     const firstLine = rawContent.trim().split('\n')[0];
     const title = firstLine.length > 30 ? firstLine.substring(0, 30) + '...' : firstLine;
     const urlMatch = rawContent.match(/(https?:\/\/[^\s]+)/);
     const url = urlMatch ? urlMatch[0] : '';
 
-    const taskId = Date.now().toString();
     const newTask = {
-      id: taskId,
       title,
       url,
       content: rawContent,
@@ -425,93 +331,42 @@ export default function App() {
       summary: '',
       status: 'todo', 
       step: 1, 
-      created_at: new Date().toISOString(),
+      created_at: serverTimestamp(), 
       imageStatus: false,
       substackLink: ''
     };
     
-    // 檢查 Firebase 狀態
-    console.log('📝 準備新增任務，Firebase 狀態:', {
-      isFirebaseConfigured,
-      hasUser: !!user,
-      hasDb: !!db,
-      userId: user?.uid
-    });
-    
-    // 如果 Firebase 已配置但未登入，顯示提示並等待
-    if (isFirebaseConfigured && !user) {
-      console.warn('⚠️ Firebase 已配置但使用者未登入');
-      console.warn('💡 提示: 請檢查瀏覽器 Console 是否有 Firebase 登入錯誤');
-      console.warn('💡 可能原因:');
-      console.warn('   1. Firebase 匿名登入未啟用');
-      console.warn('   2. Firestore 安全規則不允許寫入');
-      console.warn('   3. 網路連線問題');
-      alert('Firebase 登入尚未完成，請稍候再試。\n\n如果問題持續，請檢查瀏覽器 Console 的錯誤訊息。');
-      return; // 不新增任務，等待 Firebase 登入完成
+    setIsSaving(true);
+    try {
+      await addDoc(collection(db, 'artifacts', appId, 'public', 'data', 'tasks'), newTask);
+      setIsModalOpen(false);
+    } catch (e) {
+      console.error("Error adding task:", e);
+      alert("新增失敗");
+    } finally {
+      setIsSaving(false);
     }
-    
-    // 如果 Firebase 已配置且已登入，同步到 Firestore
-    if (isFirebaseConfigured && user && db) {
-      try {
-        console.log('🔥 正在同步任務到 Firebase...');
-        const tasksRef = collection(db, 'tasks');
-        const docRef = await addDoc(tasksRef, {
-          ...newTask,
-          created_at: serverTimestamp()
-        });
-        console.log("✅ Task added to Firebase with ID:", docRef.id);
-        setIsModalOpen(false);
-        // Firebase 會透過 onSnapshot 自動更新 tasks state
-        return;
-      } catch (e) {
-        console.error("❌ Error adding task to Firebase: ", e);
-        console.error("錯誤詳情:", {
-          code: e.code,
-          message: e.message,
-          stack: e.stack
-        });
-        
-        // 根據錯誤類型提供更詳細的提示
-        let errorMessage = `同步到 Firebase 失敗: ${e.message}`;
-        if (e.code === 'permission-denied') {
-          errorMessage += '\n\n💡 提示: 請檢查 Firestore 安全規則是否允許寫入';
-        } else if (e.code === 'unavailable') {
-          errorMessage += '\n\n💡 提示: Firestore 服務暫時不可用，請稍後再試';
-        }
-        
-        alert(errorMessage + '\n\n已儲存到本地');
-        // 失敗時降級到本地儲存
-      }
-    }
-
-    // 使用本地儲存（Firebase 未配置或同步失敗時）
-    console.log("💾 Saving task to local storage");
-    setTasks(prev => [newTask, ...prev]);
-    setIsModalOpen(false);
   };
 
   const updateTask = async (id, updates) => {
-    // 如果 Firebase 已配置且已登入，同步到 Firestore
-    if (isFirebaseConfigured && user && db) {
-      try {
-        const taskRef = doc(db, 'tasks', id.toString());
-        await updateDoc(taskRef, updates);
-        console.log("✅ Task updated in Firebase");
-        // Firebase 會透過 onSnapshot 自動更新 tasks state
-        return;
-      } catch (e) {
-        console.error("❌ Error updating task in Firebase: ", e);
-        // 失敗時降級到本地儲存
-      }
+    if (!user) return;
+    setIsSaving(true);
+    try {
+      const taskRef = doc(db, 'artifacts', appId, 'public', 'data', 'tasks', id);
+      await updateDoc(taskRef, updates);
+    } catch (e) {
+      console.error("Error updating task:", e);
+    } finally {
+      // 延遲一下讓用戶看到儲存完成
+      setTimeout(() => setIsSaving(false), 500);
     }
-
-    // 使用本地儲存（Firebase 未配置或同步失敗時）
-    setTasks(prevTasks => prevTasks.map(t => t.id === id ? { ...t, ...updates } : t));
   };
 
-  const handleNextStep = (task, nextStepData = {}) => {
+  const handleNextStep = async (task, nextStepData = {}) => {
     const currentStep = task.step;
     let nextUpdates = { ...nextStepData };
+    
+    // 確保狀態同步更新
     if (currentStep === 1) {
       nextUpdates = { ...nextUpdates, step: 2, status: 'in_progress' };
     } else if (currentStep === 2) {
@@ -519,7 +374,11 @@ export default function App() {
     } else if (currentStep === 3) {
       nextUpdates = { ...nextUpdates, step: 4 };
     }
-    updateTask(task.id, nextUpdates);
+    
+    // 使用 await 確保寫入完成
+    await updateTask(task.id, nextUpdates);
+    
+    // 捲動
     setTimeout(() => {
         const nextStepElement = document.getElementById(`step-${currentStep + 1}`);
         if (nextStepElement) {
@@ -545,46 +404,19 @@ export default function App() {
   };
 
   const confirmAction = async () => {
+    if (!user) return;
+    
     if (confirmDialog.type === 'delete') {
-      // 如果 Firebase 已配置且已登入，從 Firestore 刪除
-      if (isFirebaseConfigured && user && db) {
-        try {
-          await deleteDoc(doc(db, 'tasks', confirmDialog.id.toString()));
-          if (activeTaskId === confirmDialog.id) setActiveTaskId(null);
-          // Firebase 會透過 onSnapshot 自動更新 tasks state
-        } catch (e) {
-          console.error("❌ Delete from Firebase failed", e);
-          // 失敗時降級到本地儲存
-        }
-      }
-      
-      // 使用本地儲存（Firebase 未配置或同步失敗時）
-      setTasks(prev => prev.filter(t => t.id !== confirmDialog.id && t.id?.toString() !== confirmDialog.id.toString()));
+      await deleteDoc(doc(db, 'artifacts', appId, 'public', 'data', 'tasks', confirmDialog.id));
       if (activeTaskId === confirmDialog.id) setActiveTaskId(null);
     } else if (confirmDialog.type === 'archive') {
-      // 歸檔邏輯：將所有 status !== 'archived' 的任務更新為 'archived'
       const activeTasks = tasks.filter(t => t.status !== 'archived');
       const now = new Date().toISOString();
-      
-      // 如果 Firebase 已配置且已登入，同步到 Firestore
-      if (isFirebaseConfigured && user && db) {
-        try {
-          await Promise.all(activeTasks.map(task => {
-            const taskRef = doc(db, 'tasks', task.id.toString());
-            return updateDoc(taskRef, { status: 'archived', completed_at: now });
-          }));
-          console.log("✅ Tasks archived in Firebase");
-          setActiveTaskId(null);
-          // Firebase 會透過 onSnapshot 自動更新 tasks state
-        } catch (e) {
-          console.error("❌ Archive in Firebase failed", e);
-          alert("歸檔失敗，請重試");
-        }
-      } else {
-        // 使用本地儲存（Firebase 未配置時）
-        setTasks([]);
-        setActiveTaskId(null);
-      }
+      activeTasks.forEach(task => {
+         const taskRef = doc(db, 'artifacts', appId, 'public', 'data', 'tasks', task.id);
+         updateDoc(taskRef, { status: 'archived', completed_at: now });
+      });
+      setActiveTaskId(null);
     }
     setConfirmDialog({ isOpen: false, type: '', id: null });
   };
@@ -620,7 +452,8 @@ export default function App() {
     setIsGeneratingGPT(true);
     try {
       const result = await callOpenAIAPI(apiKey, PROMPTS.chatgpt_role, activeTask.geminiReport);
-      updateTask(activeTask.id, { summary: result });
+      // 生成後直接寫入 DB
+      await updateTask(activeTask.id, { summary: result });
     } catch (error) {
       alert(`發生錯誤：${error.message}`);
     } finally {
@@ -732,9 +565,16 @@ export default function App() {
                 </span>
               </div>
             </div>
-            <button onClick={() => setActiveTaskId(null)} className="text-white/80 hover:text-white p-1 rounded-full hover:bg-white/10 transition-colors">
-              <X size={24} />
-            </button>
+            <div className="flex items-center space-x-2">
+                {/* 儲存狀態指示燈 */}
+                <div className={`flex items-center text-xs px-2 py-1 rounded transition-opacity ${isSaving ? 'opacity-100 bg-white/20' : 'opacity-0'}`}>
+                    <Save size={12} className="mr-1 animate-pulse" />
+                    <span>儲存中...</span>
+                </div>
+                <button onClick={() => setActiveTaskId(null)} className="text-white/80 hover:text-white p-1 rounded-full hover:bg-white/10 transition-colors">
+                  <X size={24} />
+                </button>
+            </div>
           </div>
 
           <div ref={wizardScrollRef} className="flex-1 overflow-y-auto p-4 sm:p-6 space-y-6 sm:space-y-8 pb-20 sm:pb-6">
@@ -819,7 +659,13 @@ export default function App() {
                     <>
                     <div className="mb-6 bg-slate-50 p-4 rounded-lg border border-slate-200">
                     <div className="flex items-center mb-2 text-purple-800 font-bold text-sm"><ClipboardPaste size={16} className="mr-2" /> 第一步：Gemini 研究報告 (手動貼上)</div>
-                    <textarea className="w-full border rounded p-3 text-base sm:text-sm h-32 focus:ring-2 focus:ring-purple-500 outline-none" placeholder="請在此貼上您從 Gemini 獲得的研究報告..." value={activeTask.geminiReport || ''} onChange={(e) => updateTask(activeTask.id, { geminiReport: e.target.value })} />
+                    {/* 使用 AutoSaveTextarea */}
+                    <AutoSaveTextarea 
+                        className="w-full border rounded p-3 text-base sm:text-sm focus:ring-2 focus:ring-purple-500 outline-none" 
+                        placeholder="請在此貼上您從 Gemini 獲得的研究報告..." 
+                        value={activeTask.geminiReport || ''} 
+                        onChange={(val) => updateTask(activeTask.id, { geminiReport: val })} 
+                    />
                     <div className="mt-3 grid grid-cols-1 sm:grid-cols-2 gap-3">
                         <Button onClick={() => copyChatGPTPrompt(PROMPTS.chatgpt_role, activeTask.geminiReport)} icon={Copy} variant="secondary" className="w-full border-purple-200 text-purple-700 hover:bg-purple-50" disabled={!activeTask.geminiReport}>手動複製指令</Button>
                         <Button onClick={handleChatGPTGenerate} icon={Sparkles} variant="magic" className="w-full" loading={isGeneratingGPT} disabled={!activeTask.geminiReport}>AI 自動撰寫文案</Button>
@@ -827,7 +673,13 @@ export default function App() {
                     </div>
                     <div className="border-t pt-4">
                     <p className="text-sm text-gray-500 mb-2 font-bold">第三步：最終摘要 (AI 自動填入或手動貼上)</p>
-                    <textarea className="w-full border rounded p-3 text-base sm:text-sm h-32 focus:ring-2 focus:ring-purple-500 outline-none resize-none" placeholder="最終產出的標題與摘要會顯示在這裡..." value={activeTask.summary} onChange={(e) => updateTask(activeTask.id, { summary: e.target.value })} />
+                    {/* 使用 AutoSaveTextarea */}
+                    <AutoSaveTextarea 
+                        className="w-full border rounded p-3 text-base sm:text-sm focus:ring-2 focus:ring-purple-500 outline-none resize-none" 
+                        placeholder="最終產出的標題與摘要會顯示在這裡..." 
+                        value={activeTask.summary} 
+                        onChange={(val) => updateTask(activeTask.id, { summary: val })} 
+                    />
                     </div>
                     </>
                 )}
