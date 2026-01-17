@@ -4,13 +4,31 @@ import { initializeApp } from 'firebase/app';
 import { getAuth, signInAnonymously, onAuthStateChanged, signInWithCustomToken } from 'firebase/auth';
 import { getFirestore, collection, doc, addDoc, updateDoc, deleteDoc, onSnapshot, serverTimestamp, query } from 'firebase/firestore';
 
-// --- Firebase 初始化 (使用環境內建配置) ---
-const firebaseConfig = JSON.parse(__firebase_config);
-const app = initializeApp(firebaseConfig);
-const auth = getAuth(app);
-const db = getFirestore(app);
-// 使用環境提供的 appId，確保多人連線到同一個空間
-const appId = typeof __app_id !== 'undefined' ? __app_id : 'content-farm-os-default';
+// --- Firebase 初始化 ---
+const firebaseConfig = {
+  apiKey: import.meta.env.VITE_FIREBASE_API_KEY,
+  authDomain: import.meta.env.VITE_FIREBASE_AUTH_DOMAIN,
+  projectId: import.meta.env.VITE_FIREBASE_PROJECT_ID,
+  storageBucket: import.meta.env.VITE_FIREBASE_STORAGE_BUCKET,
+  messagingSenderId: import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID,
+  appId: import.meta.env.VITE_FIREBASE_APP_ID
+};
+
+// 檢查 Firebase 配置是否完整
+const isFirebaseConfigured = firebaseConfig.apiKey && firebaseConfig.projectId;
+
+let app, auth, db;
+if (isFirebaseConfigured) {
+  try {
+    app = initializeApp(firebaseConfig);
+    auth = getAuth(app);
+    db = getFirestore(app);
+  } catch (error) {
+    console.error('Firebase 初始化失敗:', error);
+  }
+}
+
+const appId = import.meta.env.VITE_APP_ID || 'content-farm-os';
 
 // --- 配置與 Prompt 資料庫 ---
 const PROMPTS = {
@@ -184,11 +202,13 @@ export default function App() {
 
   // --- Firebase 登入與資料監聽 ---
   useEffect(() => {
+    if (!isFirebaseConfigured || !auth) return;
+
     const initAuth = async () => {
-      if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
-        await signInWithCustomToken(auth, __initial_auth_token);
-      } else {
+      try {
         await signInAnonymously(auth);
+      } catch (error) {
+        console.error('Firebase 匿名登入失敗:', error);
       }
     };
     initAuth();
@@ -201,7 +221,7 @@ export default function App() {
 
   // 監聽 Firestore 資料
   useEffect(() => {
-    if (!user) return;
+    if (!isFirebaseConfigured || !user || !db) return;
     
     // 使用 Public Collection 實現多人協作
     const tasksRef = collection(db, 'artifacts', appId, 'public', 'data', 'tasks');
@@ -277,7 +297,7 @@ export default function App() {
 
   // --- CRUD Operations ---
   const addTask = async (rawContent) => {
-    if (!rawContent.trim() || !user) return;
+    if (!rawContent.trim() || !isFirebaseConfigured || !user || !db) return;
 
     const firstLine = rawContent.trim().split('\n')[0];
     const title = firstLine.length > 30 ? firstLine.substring(0, 30) + '...' : firstLine;
@@ -303,7 +323,7 @@ export default function App() {
   };
 
   const updateTask = async (id, updates) => {
-    if (!user) return;
+    if (!isFirebaseConfigured || !user || !db) return;
     const taskRef = doc(db, 'artifacts', appId, 'public', 'data', 'tasks', id);
     await updateDoc(taskRef, updates);
   };
@@ -344,7 +364,7 @@ export default function App() {
   };
 
   const confirmAction = async () => {
-    if (!user) return;
+    if (!isFirebaseConfigured || !user || !db) return;
     
     if (confirmDialog.type === 'delete') {
       await deleteDoc(doc(db, 'artifacts', appId, 'public', 'data', 'tasks', confirmDialog.id));
