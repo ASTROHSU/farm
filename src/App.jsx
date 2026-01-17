@@ -1,14 +1,31 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { Plus, Copy, Check, ArrowRight, FileText, Trash2, ExternalLink, Settings, X, AlignLeft, Archive, AlertTriangle, ClipboardPaste, Sparkles, Loader2, Key, LayoutTemplate, PlayCircle, Upload, Image as ImageIcon, Save } from 'lucide-react';
+import { Plus, Copy, Check, ArrowRight, FileText, Trash2, ExternalLink, Settings, X, AlignLeft, Archive, AlertTriangle, ClipboardPaste, Sparkles, Loader2, Key, LayoutTemplate, PlayCircle, Upload, Image as ImageIcon, Save, Cloud, CloudOff } from 'lucide-react';
 import { initializeApp } from 'firebase/app';
 import { getAuth, signInAnonymously, onAuthStateChanged, signInWithCustomToken } from 'firebase/auth';
 import { getFirestore, collection, doc, addDoc, updateDoc, deleteDoc, onSnapshot, serverTimestamp, query } from 'firebase/firestore';
 
-// --- Firebase 初始化 ---
-const firebaseConfig = JSON.parse(__firebase_config);
-const app = initializeApp(firebaseConfig);
-const auth = getAuth(app);
-const db = getFirestore(app);
+// --- Firebase 初始化 (安全模式) ---
+let firebaseConfig = null;
+let app, auth, db;
+let isFirebaseConfigured = false;
+
+try {
+  // 檢查全域變數是否存在
+  if (typeof __firebase_config !== 'undefined') {
+    firebaseConfig = JSON.parse(__firebase_config);
+    app = initializeApp(firebaseConfig);
+    auth = getAuth(app);
+    db = getFirestore(app);
+    isFirebaseConfigured = true;
+    console.log('✅ Firebase initialized successfully');
+  } else {
+    console.warn('⚠️ __firebase_config is not defined. Falling back to local storage mode.');
+  }
+} catch (error) {
+  console.error('❌ Error initializing Firebase:', error);
+  isFirebaseConfigured = false;
+}
+
 const appId = typeof __app_id !== 'undefined' ? __app_id : 'content-farm-os-default';
 
 // --- 配置與 Prompt 資料庫 ---
@@ -83,11 +100,10 @@ const Button = ({ onClick, children, variant = "primary", className = "", icon: 
   );
 };
 
-// --- 優化版 Textarea：自動儲存與本地狀態 ---
+// --- 優化版 Textarea ---
 const AutoSaveTextarea = ({ value, onChange, placeholder, className, minHeight = "h-32" }) => {
   const [localValue, setLocalValue] = useState(value || '');
   
-  // 當外部 value 改變時（例如從 DB 載入），更新本地狀態
   useEffect(() => {
     if (value !== undefined) {
       setLocalValue(value);
@@ -99,7 +115,6 @@ const AutoSaveTextarea = ({ value, onChange, placeholder, className, minHeight =
   };
 
   const handleBlur = () => {
-    // 失去焦點時才觸發儲存，避免頻繁寫入 DB
     if (localValue !== value) {
       onChange(localValue);
     }
@@ -111,7 +126,7 @@ const AutoSaveTextarea = ({ value, onChange, placeholder, className, minHeight =
       placeholder={placeholder}
       value={localValue}
       onChange={handleChange}
-      onBlur={handleBlur} // 關鍵：失去焦點時儲存
+      onBlur={handleBlur}
     />
   );
 };
@@ -192,6 +207,8 @@ export default function App() {
   const [user, setUser] = useState(null);
   const [tasks, setTasks] = useState([]);
   const [isLoadingTasks, setIsLoadingTasks] = useState(true);
+  const [connectionStatus, setConnectionStatus] = useState('checking'); // 'cloud', 'local'
+
   const [apiKeys, setApiKeys] = useState(() => {
     try {
       const saved = localStorage.getItem('content-farm-api-keys');
@@ -212,7 +229,6 @@ export default function App() {
   const [confirmDialog, setConfirmDialog] = useState({ isOpen: false, type: '', id: null });
   const [isGeneratingGPT, setIsGeneratingGPT] = useState(false);
   
-  // 新增：儲存狀態指示
   const [isSaving, setIsSaving] = useState(false);
 
   const substackPreviewRef = useRef(null);
@@ -223,24 +239,60 @@ export default function App() {
 
   // --- Firebase Auth & Data Sync ---
   useEffect(() => {
+    if (!isFirebaseConfigured) {
+      console.log('⚠️ Firebase not configured, skipping auth init');
+      setConnectionStatus('local');
+      return;
+    }
+
     const initAuth = async () => {
-      if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
-        await signInWithCustomToken(auth, __initial_auth_token);
-      } else {
-        await signInAnonymously(auth);
+      try {
+        if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
+          await signInWithCustomToken(auth, __initial_auth_token);
+        } else {
+          await signInAnonymously(auth);
+        }
+      } catch (e) {
+        console.error('Firebase Auth Error:', e);
+        setConnectionStatus('local'); // 登入失敗也降級為本地
       }
     };
     initAuth();
 
     const unsubscribeAuth = onAuthStateChanged(auth, (currentUser) => {
       setUser(currentUser);
+      if (currentUser) {
+        setConnectionStatus('cloud');
+      } else {
+        // 如果是登出狀態，可能暫時斷線
+        // 這裡可以設為 'checking' 或保持原樣等待重連
+      }
     });
     return () => unsubscribeAuth();
   }, []);
 
   useEffect(() => {
+    // 降級處理：如果 Firebase 未配置，讀取本地資料
+    if (!isFirebaseConfigured) {
+      try {
+        const saved = localStorage.getItem('content-farm-tasks');
+        if (saved) {
+            setTasks(JSON.parse(saved));
+        } else {
+            setTasks([
+              { id: 1, title: '範例：SEC 起訴 Coinbase', status: 'inbox', url: 'https://example.com', content: '這裡是一段範例的原始文字內容...', geminiReport: '', summary: '', substackLink: '', created_at: new Date().toISOString() },
+            ]);
+        }
+      } catch (e) {
+        console.error('Local storage read error:', e);
+      }
+      setIsLoadingTasks(false);
+      return;
+    }
+
     if (!user) return;
     
+    // Firebase 正常連線時
     const tasksRef = collection(db, 'artifacts', appId, 'public', 'data', 'tasks');
     const q = query(tasksRef);
 
@@ -259,10 +311,23 @@ export default function App() {
         .sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
 
       setTasks(visibleTasks);
+      setIsLoadingTasks(false);
+      setConnectionStatus('cloud'); // 確保收到資料時狀態正確
+    }, (error) => {
+        console.error("Firestore Snapshot Error:", error);
+        setConnectionStatus('local'); // 發生錯誤時標記為本地模式（或斷線）
+        setIsLoadingTasks(false);
     });
 
     return () => unsubscribe();
   }, [user]);
+
+  // 同步到本地作為備份 (僅當 Firebase 模式運作中)
+  useEffect(() => {
+    if (isFirebaseConfigured && tasks.length > 0) {
+        localStorage.setItem('content-farm-tasks', JSON.stringify(tasks));
+    }
+  }, [tasks]);
 
   // --- 畫面效果 ---
   useEffect(() => {
@@ -331,14 +396,20 @@ export default function App() {
       summary: '',
       status: 'todo', 
       step: 1, 
-      created_at: serverTimestamp(), 
+      created_at: isFirebaseConfigured ? serverTimestamp() : new Date().toISOString(), 
       imageStatus: false,
       substackLink: ''
     };
     
     setIsSaving(true);
     try {
-      await addDoc(collection(db, 'artifacts', appId, 'public', 'data', 'tasks'), newTask);
+      if (isFirebaseConfigured && user) {
+        await addDoc(collection(db, 'artifacts', appId, 'public', 'data', 'tasks'), newTask);
+      } else {
+        // 本地模式
+        const localTask = { ...newTask, id: Date.now().toString() };
+        setTasks([localTask, ...tasks]);
+      }
       setIsModalOpen(false);
     } catch (e) {
       console.error("Error adding task:", e);
@@ -349,15 +420,18 @@ export default function App() {
   };
 
   const updateTask = async (id, updates) => {
-    if (!user) return;
     setIsSaving(true);
     try {
-      const taskRef = doc(db, 'artifacts', appId, 'public', 'data', 'tasks', id);
-      await updateDoc(taskRef, updates);
+      if (isFirebaseConfigured && user) {
+        const taskRef = doc(db, 'artifacts', appId, 'public', 'data', 'tasks', id);
+        await updateDoc(taskRef, updates);
+      } else {
+        // 本地模式
+        setTasks(prev => prev.map(t => t.id === id ? { ...t, ...updates } : t));
+      }
     } catch (e) {
       console.error("Error updating task:", e);
     } finally {
-      // 延遲一下讓用戶看到儲存完成
       setTimeout(() => setIsSaving(false), 500);
     }
   };
@@ -365,8 +439,6 @@ export default function App() {
   const handleNextStep = async (task, nextStepData = {}) => {
     const currentStep = task.step;
     let nextUpdates = { ...nextStepData };
-    
-    // 確保狀態同步更新
     if (currentStep === 1) {
       nextUpdates = { ...nextUpdates, step: 2, status: 'in_progress' };
     } else if (currentStep === 2) {
@@ -374,11 +446,7 @@ export default function App() {
     } else if (currentStep === 3) {
       nextUpdates = { ...nextUpdates, step: 4 };
     }
-    
-    // 使用 await 確保寫入完成
     await updateTask(task.id, nextUpdates);
-    
-    // 捲動
     setTimeout(() => {
         const nextStepElement = document.getElementById(`step-${currentStep + 1}`);
         if (nextStepElement) {
@@ -404,18 +472,25 @@ export default function App() {
   };
 
   const confirmAction = async () => {
-    if (!user) return;
-    
     if (confirmDialog.type === 'delete') {
-      await deleteDoc(doc(db, 'artifacts', appId, 'public', 'data', 'tasks', confirmDialog.id));
+      if (isFirebaseConfigured && user) {
+        await deleteDoc(doc(db, 'artifacts', appId, 'public', 'data', 'tasks', confirmDialog.id));
+      } else {
+         setTasks(prev => prev.filter(t => t.id !== confirmDialog.id));
+      }
       if (activeTaskId === confirmDialog.id) setActiveTaskId(null);
     } else if (confirmDialog.type === 'archive') {
       const activeTasks = tasks.filter(t => t.status !== 'archived');
       const now = new Date().toISOString();
-      activeTasks.forEach(task => {
-         const taskRef = doc(db, 'artifacts', appId, 'public', 'data', 'tasks', task.id);
-         updateDoc(taskRef, { status: 'archived', completed_at: now });
-      });
+      if (isFirebaseConfigured && user) {
+        // 批次處理在前端迴圈執行
+        activeTasks.forEach(task => {
+           const taskRef = doc(db, 'artifacts', appId, 'public', 'data', 'tasks', task.id);
+           updateDoc(taskRef, { status: 'archived', completed_at: now });
+        });
+      } else {
+        setTasks([]); // 本地模式直接清空
+      }
       setActiveTaskId(null);
     }
     setConfirmDialog({ isOpen: false, type: '', id: null });
@@ -452,7 +527,6 @@ export default function App() {
     setIsGeneratingGPT(true);
     try {
       const result = await callOpenAIAPI(apiKey, PROMPTS.chatgpt_role, activeTask.geminiReport);
-      // 生成後直接寫入 DB
       await updateTask(activeTask.id, { summary: result });
     } catch (error) {
       alert(`發生錯誤：${error.message}`);
@@ -848,6 +922,18 @@ export default function App() {
             <h1 className="text-lg sm:text-xl font-bold tracking-wide">內容農場｜週報製作 SOP</h1>
           </div>
           <div className="flex items-center space-x-2">
+            {/* Connection Status Badge */}
+            {connectionStatus === 'local' && (
+              <span className="flex items-center px-2 py-1 bg-amber-100 text-amber-800 text-xs rounded-full font-bold mr-2" title="資料僅儲存在這台電腦，無法與他人協作">
+                <AlertTriangle size={12} className="mr-1" /> 本機模式 (無協作)
+              </span>
+            )}
+            {connectionStatus === 'cloud' && (
+              <span className="flex items-center px-2 py-1 bg-green-100 text-green-800 text-xs rounded-full font-bold mr-2">
+                <Check size={12} className="mr-1" /> 雲端同步中
+              </span>
+            )}
+
             <Button 
               variant="ghost" 
               onClick={() => setIsSettingsOpen(true)}
@@ -864,7 +950,6 @@ export default function App() {
               <span className="hidden sm:inline">本週已完成</span>
               <span className="sm:hidden">完成</span>
             </Button>
-            
           </div>
         </div>
       </header>
