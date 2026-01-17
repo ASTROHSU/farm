@@ -4,56 +4,16 @@ import { initializeApp } from 'firebase/app';
 import { getAuth, signInAnonymously, onAuthStateChanged, signInWithCustomToken } from 'firebase/auth';
 import { getFirestore, collection, doc, addDoc, updateDoc, deleteDoc, onSnapshot, serverTimestamp, query } from 'firebase/firestore';
 
-// --- Firebase 初始化 ---
-const firebaseConfig = {
-  apiKey: import.meta.env.VITE_FIREBASE_API_KEY,
-  authDomain: import.meta.env.VITE_FIREBASE_AUTH_DOMAIN,
-  projectId: import.meta.env.VITE_FIREBASE_PROJECT_ID,
-  storageBucket: import.meta.env.VITE_FIREBASE_STORAGE_BUCKET,
-  messagingSenderId: import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID,
-  appId: import.meta.env.VITE_FIREBASE_APP_ID
-};
-
-// 檢查 Firebase 配置是否完整
-const isFirebaseConfigured = firebaseConfig.apiKey && firebaseConfig.projectId;
-
-// 調試：檢查配置
-if (isFirebaseConfigured) {
-  console.log('🔧 Firebase 配置檢查:', {
-    hasApiKey: !!firebaseConfig.apiKey,
-    hasProjectId: !!firebaseConfig.projectId,
-    hasAuthDomain: !!firebaseConfig.authDomain,
-    projectId: firebaseConfig.projectId
-  });
-} else {
-  console.warn('⚠️ Firebase 未配置，缺少:', {
-    apiKey: !firebaseConfig.apiKey,
-    projectId: !firebaseConfig.projectId
-  });
-}
-
-let app, auth, db;
-if (isFirebaseConfigured) {
-  try {
-    app = initializeApp(firebaseConfig);
-    auth = getAuth(app);
-    db = getFirestore(app);
-    console.log('✅ Firebase 初始化成功');
-  } catch (error) {
-    console.error('❌ Firebase 初始化失敗:', error);
-    console.error('錯誤詳情:', {
-      message: error.message,
-      code: error.code,
-      stack: error.stack
-    });
-  }
-}
-
-const appId = 'content-farm-os';
+// --- Firebase 初始化 (使用環境內建配置) ---
+const firebaseConfig = JSON.parse(__firebase_config);
+const app = initializeApp(firebaseConfig);
+const auth = getAuth(app);
+const db = getFirestore(app);
+// 使用環境提供的 appId，確保多人連線到同一個空間
+const appId = typeof __app_id !== 'undefined' ? __app_id : 'content-farm-os-default';
 
 // --- 配置與 Prompt 資料庫 ---
 const PROMPTS = {
-  // 修改：還原為原始的研究指令
   gemini: `請你替我研究這個主題並以繁體中文製作報告，內容包含目前的發展進度是什麼、為什麼會發生這件事（為什麼會做這個決定），以及這件事會對未來產生什麼影響？還有，我也想知道網路上有哪些人對這起事件有哪些正面和反面的論點？他們說了什麼、為什麼這樣說？`,
   
   chatgpt_role: `# Role
@@ -95,12 +55,10 @@ const Badge = ({ children, color = "blue" }) => {
   );
 };
 
-// 修改 Button 組件以支援暫時性文字變化 (Copied feedback)
 const Button = ({ onClick, children, variant = "primary", className = "", icon: Icon, disabled = false, loading = false }) => {
   const [feedback, setFeedback] = useState(null);
   
   const handleClick = async (e) => {
-    // 攔截 onClick 來處理複製回饋，如果 onClick 回傳 "copied"，則顯示回饋
     const result = await onClick(e);
     if (result === 'copied') {
       setFeedback('已複製！');
@@ -199,7 +157,6 @@ const triggerConfetti = () => {
 export default function App() {
   const [user, setUser] = useState(null);
   const [tasks, setTasks] = useState([]);
-  const [isLoadingTasks, setIsLoadingTasks] = useState(true);
   const [apiKeys, setApiKeys] = useState(() => {
     try {
       const saved = localStorage.getItem('content-farm-api-keys');
@@ -225,134 +182,54 @@ export default function App() {
 
   const activeTask = tasks.find(t => t.id === activeTaskId);
 
-  // --- Firebase Auth & Data Sync ---
+  // --- Firebase 登入與資料監聽 ---
   useEffect(() => {
-    if (!isFirebaseConfigured) {
-      // 如果 Firebase 未配置，使用本地儲存
-      console.log('⚠️ Firebase 未配置，使用本地儲存');
-      try {
-        const saved = localStorage.getItem('content-farm-tasks');
-        if (saved) {
-          const parsed = JSON.parse(saved);
-          setTasks(parsed);
-        }
-      } catch (e) {
-        console.error('讀取本地儲存失敗:', e);
-      }
-      return;
-    }
-
-    // 檢查 auth 和 db 是否已初始化
-    if (!auth || !db) {
-      console.error('❌ Firebase auth 或 db 未初始化', { auth: !!auth, db: !!db });
-      return;
-    }
-
-    // 1. 初始化登入
     const initAuth = async () => {
-      try {
-        console.log('🔐 開始 Firebase 匿名登入...');
-        const userCredential = await signInAnonymously(auth);
-        console.log('✅ Firebase 匿名登入成功:', userCredential.user.uid);
-      } catch (error) {
-        console.error('❌ Firebase 匿名登入失敗:', error);
-        console.error('錯誤詳情:', {
-          code: error.code,
-          message: error.message,
-          stack: error.stack
-        });
-        // 顯示用戶友好的錯誤訊息
-        if (error.code === 'auth/operation-not-allowed') {
-          console.error('💡 提示: 請在 Firebase Console 啟用匿名登入功能');
-        }
+      if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
+        await signInWithCustomToken(auth, __initial_auth_token);
+      } else {
+        await signInAnonymously(auth);
       }
     };
     initAuth();
 
-    // 2. 監聽登入狀態
     const unsubscribeAuth = onAuthStateChanged(auth, (currentUser) => {
-      console.log('🔔 Firebase 登入狀態變更:', currentUser ? `已登入 (${currentUser.uid})` : '未登入');
       setUser(currentUser);
-      if (currentUser) {
-        console.log('✅ Firebase 登入成功:', currentUser.uid);
-      } else {
-        console.warn('⚠️ Firebase 使用者為 null，可能登入尚未完成或失敗');
-      }
-    }, (error) => {
-      console.error('❌ Firebase 登入狀態監聽錯誤:', error);
     });
-
-    return () => {
-      console.log('🧹 清理 Firebase 登入監聽器');
-      unsubscribeAuth();
-    };
+    return () => unsubscribeAuth();
   }, []);
 
-  // 3. 監聽資料庫變更 (當 user 存在時)
+  // 監聽 Firestore 資料
   useEffect(() => {
-    if (!isFirebaseConfigured || !user || !db) return;
-
-    // 使用簡單的路徑結構
-    const tasksRef = collection(db, 'tasks');
+    if (!user) return;
+    
+    // 使用 Public Collection 實現多人協作
+    const tasksRef = collection(db, 'artifacts', appId, 'public', 'data', 'tasks');
     const q = query(tasksRef);
 
-    const unsubscribe = onSnapshot(
-      q,
-      (snapshot) => {
-        const loadedTasks = snapshot.docs.map(doc => {
-          const data = doc.data();
-          return {
+    const unsubscribe = onSnapshot(q, (snapshot) => {
+      const loadedTasks = snapshot.docs.map(doc => {
+        const data = doc.data();
+        return {
             id: doc.id,
             ...data,
-            // 處理 Firestore Timestamp
+            // 處理 Timestamp
             created_at: data.created_at?.toDate?.()?.toISOString() || data.created_at || new Date().toISOString()
-          };
-        });
-        
-        // 過濾掉已歸檔的任務，並按建立時間排序
-        const visibleTasks = loadedTasks
-          .filter(t => t.status !== 'archived')
-          .sort((a, b) => {
-            const timeA = new Date(a.created_at).getTime();
-            const timeB = new Date(b.created_at).getTime();
-            return timeB - timeA; // 新的在前面
-          });
-          
-        setTasks(visibleTasks);
-        setIsLoadingTasks(false);
-      },
-      (error) => {
-        console.error("❌ Firestore Error:", error);
-        setIsLoadingTasks(false);
-        // 錯誤時降級到本地儲存
-        try {
-          const saved = localStorage.getItem('content-farm-tasks');
-          if (saved) {
-            const parsed = JSON.parse(saved);
-            setTasks(parsed);
-          }
-        } catch (e) {
-          console.error("讀取本地儲存失敗:", e);
-        }
-      }
-    );
+        };
+      });
+      
+      // 排序：最新的在最前面
+      const visibleTasks = loadedTasks
+        .filter(t => t.status !== 'archived')
+        .sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
+
+      setTasks(visibleTasks);
+    });
 
     return () => unsubscribe();
   }, [user]);
 
-  // 同步任務到本地儲存（作為備份，僅在 Firebase 未配置時）
-  useEffect(() => {
-    if (!isFirebaseConfigured && tasks.length > 0) {
-      try {
-        localStorage.setItem('content-farm-tasks', JSON.stringify(tasks));
-      } catch (e) {
-        console.error('儲存到本地失敗:', e);
-      }
-    }
-  }, [tasks, isFirebaseConfigured]);
-
-  // --- 畫面效果邏輯 ---
-  
+  // --- 畫面效果 ---
   useEffect(() => {
     if (activeTask && wizardScrollRef.current) {
       setTimeout(() => {
@@ -377,11 +254,7 @@ export default function App() {
     };
     updateHeight();
     window.addEventListener('resize', updateHeight);
-    window.addEventListener('orientationchange', updateHeight);
-    return () => {
-      window.removeEventListener('resize', updateHeight);
-      window.removeEventListener('orientationchange', updateHeight);
-    };
+    return () => window.removeEventListener('resize', updateHeight);
   }, []);
 
   useEffect(() => {
@@ -402,22 +275,16 @@ export default function App() {
     setFavicon();
   }, []);
 
-  // --- CRUD Operations (Firestore) ---
-
+  // --- CRUD Operations ---
   const addTask = async (rawContent) => {
-    if (!rawContent.trim()) {
-      console.warn('內容為空，無法新增任務');
-      return;
-    }
+    if (!rawContent.trim() || !user) return;
 
     const firstLine = rawContent.trim().split('\n')[0];
     const title = firstLine.length > 30 ? firstLine.substring(0, 30) + '...' : firstLine;
     const urlMatch = rawContent.match(/(https?:\/\/[^\s]+)/);
     const url = urlMatch ? urlMatch[0] : '';
 
-    const taskId = Date.now().toString();
     const newTask = {
-      id: taskId,
       title,
       url,
       content: rawContent,
@@ -425,88 +292,20 @@ export default function App() {
       summary: '',
       status: 'todo', 
       step: 1, 
-      created_at: new Date().toISOString(),
+      created_at: serverTimestamp(), // 使用 Server Timestamp
       imageStatus: false,
       substackLink: ''
     };
     
-    // 檢查 Firebase 狀態
-    console.log('📝 準備新增任務，Firebase 狀態:', {
-      isFirebaseConfigured,
-      hasUser: !!user,
-      hasDb: !!db,
-      userId: user?.uid
-    });
-    
-    // 如果 Firebase 已配置但未登入，顯示提示並等待
-    if (isFirebaseConfigured && !user) {
-      console.warn('⚠️ Firebase 已配置但使用者未登入');
-      console.warn('💡 提示: 請檢查瀏覽器 Console 是否有 Firebase 登入錯誤');
-      console.warn('💡 可能原因:');
-      console.warn('   1. Firebase 匿名登入未啟用');
-      console.warn('   2. Firestore 安全規則不允許寫入');
-      console.warn('   3. 網路連線問題');
-      alert('Firebase 登入尚未完成，請稍候再試。\n\n如果問題持續，請檢查瀏覽器 Console 的錯誤訊息。');
-      return; // 不新增任務，等待 Firebase 登入完成
-    }
-    
-    // 如果 Firebase 已配置且已登入，同步到 Firestore
-    if (isFirebaseConfigured && user && db) {
-      try {
-        console.log('🔥 正在同步任務到 Firebase...');
-        const tasksRef = collection(db, 'tasks');
-        const docRef = await addDoc(tasksRef, {
-          ...newTask,
-          created_at: serverTimestamp()
-        });
-        console.log("✅ Task added to Firebase with ID:", docRef.id);
-        setIsModalOpen(false);
-        // Firebase 會透過 onSnapshot 自動更新 tasks state
-        return;
-      } catch (e) {
-        console.error("❌ Error adding task to Firebase: ", e);
-        console.error("錯誤詳情:", {
-          code: e.code,
-          message: e.message,
-          stack: e.stack
-        });
-        
-        // 根據錯誤類型提供更詳細的提示
-        let errorMessage = `同步到 Firebase 失敗: ${e.message}`;
-        if (e.code === 'permission-denied') {
-          errorMessage += '\n\n💡 提示: 請檢查 Firestore 安全規則是否允許寫入';
-        } else if (e.code === 'unavailable') {
-          errorMessage += '\n\n💡 提示: Firestore 服務暫時不可用，請稍後再試';
-        }
-        
-        alert(errorMessage + '\n\n已儲存到本地');
-        // 失敗時降級到本地儲存
-      }
-    }
-
-    // 使用本地儲存（Firebase 未配置或同步失敗時）
-    console.log("💾 Saving task to local storage");
-    setTasks(prev => [newTask, ...prev]);
+    // 寫入 Firestore
+    await addDoc(collection(db, 'artifacts', appId, 'public', 'data', 'tasks'), newTask);
     setIsModalOpen(false);
   };
 
   const updateTask = async (id, updates) => {
-    // 如果 Firebase 已配置且已登入，同步到 Firestore
-    if (isFirebaseConfigured && user && db) {
-      try {
-        const taskRef = doc(db, 'tasks', id.toString());
-        await updateDoc(taskRef, updates);
-        console.log("✅ Task updated in Firebase");
-        // Firebase 會透過 onSnapshot 自動更新 tasks state
-        return;
-      } catch (e) {
-        console.error("❌ Error updating task in Firebase: ", e);
-        // 失敗時降級到本地儲存
-      }
-    }
-
-    // 使用本地儲存（Firebase 未配置或同步失敗時）
-    setTasks(prevTasks => prevTasks.map(t => t.id === id ? { ...t, ...updates } : t));
+    if (!user) return;
+    const taskRef = doc(db, 'artifacts', appId, 'public', 'data', 'tasks', id);
+    await updateDoc(taskRef, updates);
   };
 
   const handleNextStep = (task, nextStepData = {}) => {
@@ -545,46 +344,21 @@ export default function App() {
   };
 
   const confirmAction = async () => {
+    if (!user) return;
+    
     if (confirmDialog.type === 'delete') {
-      // 如果 Firebase 已配置且已登入，從 Firestore 刪除
-      if (isFirebaseConfigured && user && db) {
-        try {
-          await deleteDoc(doc(db, 'tasks', confirmDialog.id.toString()));
-          if (activeTaskId === confirmDialog.id) setActiveTaskId(null);
-          // Firebase 會透過 onSnapshot 自動更新 tasks state
-        } catch (e) {
-          console.error("❌ Delete from Firebase failed", e);
-          // 失敗時降級到本地儲存
-        }
-      }
-      
-      // 使用本地儲存（Firebase 未配置或同步失敗時）
-      setTasks(prev => prev.filter(t => t.id !== confirmDialog.id && t.id?.toString() !== confirmDialog.id.toString()));
+      await deleteDoc(doc(db, 'artifacts', appId, 'public', 'data', 'tasks', confirmDialog.id));
       if (activeTaskId === confirmDialog.id) setActiveTaskId(null);
     } else if (confirmDialog.type === 'archive') {
-      // 歸檔邏輯：將所有 status !== 'archived' 的任務更新為 'archived'
+      // 歸檔：找出非 archived 的任務並更新
       const activeTasks = tasks.filter(t => t.status !== 'archived');
       const now = new Date().toISOString();
-      
-      // 如果 Firebase 已配置且已登入，同步到 Firestore
-      if (isFirebaseConfigured && user && db) {
-        try {
-          await Promise.all(activeTasks.map(task => {
-            const taskRef = doc(db, 'tasks', task.id.toString());
-            return updateDoc(taskRef, { status: 'archived', completed_at: now });
-          }));
-          console.log("✅ Tasks archived in Firebase");
-          setActiveTaskId(null);
-          // Firebase 會透過 onSnapshot 自動更新 tasks state
-        } catch (e) {
-          console.error("❌ Archive in Firebase failed", e);
-          alert("歸檔失敗，請重試");
-        }
-      } else {
-        // 使用本地儲存（Firebase 未配置時）
-        setTasks([]);
-        setActiveTaskId(null);
-      }
+      // 批次更新 (Client-side loop update)
+      activeTasks.forEach(task => {
+         const taskRef = doc(db, 'artifacts', appId, 'public', 'data', 'tasks', task.id);
+         updateDoc(taskRef, { status: 'archived', completed_at: now });
+      });
+      setActiveTaskId(null);
     }
     setConfirmDialog({ isOpen: false, type: '', id: null });
   };
