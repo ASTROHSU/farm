@@ -4,25 +4,63 @@ import { initializeApp } from 'firebase/app';
 import { getAuth, signInAnonymously, onAuthStateChanged, signInWithCustomToken } from 'firebase/auth';
 import { getFirestore, collection, doc, addDoc, updateDoc, deleteDoc, onSnapshot, serverTimestamp, query } from 'firebase/firestore';
 
-// --- Firebase 初始化 (安全模式) ---
-let firebaseConfig = null;
+// --- Firebase 設定區 (手動填寫備用) ---
+const MANUAL_FIREBASE_CONFIG = {
+  apiKey: "",
+  authDomain: "",
+  projectId: "",
+  storageBucket: "",
+  messagingSenderId: "",
+  appId: ""
+};
+
+// --- Firebase 初始化邏輯 (修正版) ---
 let app, auth, db;
 let isFirebaseConfigured = false;
 
 try {
-  // 檢查全域變數是否存在
+  let configToUse = null;
+
+  // 1. 優先嘗試讀取環境自動注入的變數 (Canvas 預覽環境)
   if (typeof __firebase_config !== 'undefined') {
-    firebaseConfig = JSON.parse(__firebase_config);
-    app = initializeApp(firebaseConfig);
+    try {
+      configToUse = JSON.parse(__firebase_config);
+      console.log('Using Canvas Env Config');
+    } catch (e) {
+      console.error("解析 Canvas 環境變數失敗", e);
+    }
+  } 
+  // 2. 其次嘗試讀取 Vite/Vercel 環境變數
+  // 注意：在 Vercel 設定環境變數時，名稱必須與這裡一致 (VITE_FIREBASE_...)
+  else if (import.meta.env && import.meta.env.VITE_FIREBASE_API_KEY) {
+     configToUse = {
+      apiKey: import.meta.env.VITE_FIREBASE_API_KEY,
+      authDomain: import.meta.env.VITE_FIREBASE_AUTH_DOMAIN,
+      projectId: import.meta.env.VITE_FIREBASE_PROJECT_ID,
+      storageBucket: import.meta.env.VITE_FIREBASE_STORAGE_BUCKET,
+      messagingSenderId: import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID,
+      appId: import.meta.env.VITE_FIREBASE_APP_ID
+    };
+    console.log('Using Vite/Vercel Env Config');
+  }
+  // 3. 最後使用手動填寫的設定 (本地開發備用)
+  else if (MANUAL_FIREBASE_CONFIG.apiKey && MANUAL_FIREBASE_CONFIG.projectId) {
+    configToUse = MANUAL_FIREBASE_CONFIG;
+    console.log('Using Manual Config');
+  }
+
+  if (configToUse && configToUse.apiKey) {
+    app = initializeApp(configToUse);
     auth = getAuth(app);
     db = getFirestore(app);
     isFirebaseConfigured = true;
-    console.log('✅ Firebase initialized successfully');
+    console.log('✅ Firebase 初始化成功');
   } else {
-    console.warn('⚠️ __firebase_config is not defined. Falling back to local storage mode.');
+    console.warn('⚠️ 未偵測到 Firebase 設定，系統將降級為「本機模式」。');
+    console.warn('👉 若在 Vercel 部署，請確保環境變數以 VITE_ 開頭 (例如: VITE_FIREBASE_API_KEY)。');
   }
 } catch (error) {
-  console.error('❌ Error initializing Firebase:', error);
+  console.error('❌ Firebase 初始化發生錯誤:', error);
   isFirebaseConfigured = false;
 }
 
@@ -293,6 +331,7 @@ export default function App() {
     if (!user) return;
     
     // Firebase 正常連線時
+    // 使用 Public Collection，確保多人協作能看到相同的資料
     const tasksRef = collection(db, 'artifacts', appId, 'public', 'data', 'tasks');
     const q = query(tasksRef);
 
@@ -381,7 +420,7 @@ export default function App() {
 
   // --- CRUD Operations ---
   const addTask = async (rawContent) => {
-    if (!rawContent.trim() || !user) return;
+    if (!rawContent.trim()) return;
 
     const firstLine = rawContent.trim().split('\n')[0];
     const title = firstLine.length > 30 ? firstLine.substring(0, 30) + '...' : firstLine;
@@ -950,6 +989,7 @@ export default function App() {
               <span className="hidden sm:inline">本週已完成</span>
               <span className="sm:hidden">完成</span>
             </Button>
+            
           </div>
         </div>
       </header>
