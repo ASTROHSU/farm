@@ -3,7 +3,6 @@ import { Plus, Copy, Check, ArrowRight, FileText, Trash2, ExternalLink, Settings
 import { initializeApp } from 'firebase/app';
 import { getAuth, signInAnonymously, onAuthStateChanged, signInWithCustomToken } from 'firebase/auth';
 import { getFirestore, collection, doc, addDoc, updateDoc, deleteDoc, onSnapshot, serverTimestamp, query } from 'firebase/firestore';
-import { debounce } from 'lodash';
 
 // --- Firebase 初始化 ---
 const firebaseConfig = JSON.parse(__firebase_config);
@@ -192,6 +191,7 @@ const triggerConfetti = () => {
 export default function App() {
   const [user, setUser] = useState(null);
   const [tasks, setTasks] = useState([]);
+  const [isLoadingTasks, setIsLoadingTasks] = useState(true);
   const [apiKeys, setApiKeys] = useState(() => {
     try {
       const saved = localStorage.getItem('content-farm-api-keys');
