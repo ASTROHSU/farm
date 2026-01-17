@@ -68,6 +68,7 @@ const appId = typeof __app_id !== 'undefined' ? __app_id : 'content-farm-os-defa
 
 // --- 配置與 Prompt 資料庫 ---
 const PROMPTS = {
+  // 修改：還原為原始的研究指令
   gemini: `請你替我研究這個主題並以繁體中文製作報告，內容包含目前的發展進度是什麼、為什麼會發生這件事（為什麼會做這個決定），以及這件事會對未來產生什麼影響？還有，我也想知道網路上有哪些人對這起事件有哪些正面和反面的論點？他們說了什麼、為什麼這樣說？`,
   
   chatgpt_role: `# Role
@@ -109,10 +110,12 @@ const Badge = ({ children, color = "blue" }) => {
   );
 };
 
+// 修改 Button 組件以支援暫時性文字變化 (Copied feedback)
 const Button = ({ onClick, children, variant = "primary", className = "", icon: Icon, disabled = false, loading = false }) => {
   const [feedback, setFeedback] = useState(null);
   
   const handleClick = async (e) => {
+    // 攔截 onClick 來處理複製回饋，如果 onClick 回傳 "copied"，則顯示回饋
     const result = await onClick(e);
     if (result === 'copied') {
       setFeedback('已複製！');
@@ -728,9 +731,13 @@ export default function App() {
               <Card className={`p-4 bg-white transition-all ${!isDone && currentStep === 1 ? 'ring-2 ring-blue-500 shadow-lg' : ''}`}>
                 {!isDone && currentStep === 1 && (
                     <>
-                    <p className="text-sm text-gray-500 mb-2">手動複製指令與素材（前往 Gemini 網頁）</p>
+                    <div className="font-bold mb-1 text-slate-500 flex justify-between items-center">
+                      素材預覽：
+                      <button onClick={() => copyToClipboard(activeTask.content)} className="text-xs text-gray-400 hover:text-blue-600 flex items-center bg-gray-100 px-2 py-1 rounded transition-colors">
+                        <Copy size={12} className="mr-1" /> 複製素材
+                      </button>
+                    </div>
                     <div className="mb-3 p-3 border-l-4 border-blue-200 bg-slate-50 text-xs text-gray-600">
-                    <div className="font-bold mb-1 text-slate-500">素材預覽：</div>
                     <div className="line-clamp-3 italic text-slate-700">{activeTask.content}</div>
                     </div>
                     <div className="grid grid-cols-1 gap-3 mb-4">
@@ -771,7 +778,14 @@ export default function App() {
                 {!isDone && currentStep === 2 && (
                     <>
                     <div className="mb-6 bg-slate-50 p-4 rounded-lg border border-slate-200">
-                    <div className="flex items-center mb-2 text-purple-800 font-bold text-sm"><ClipboardPaste size={16} className="mr-2" /> 第一步：Gemini 研究報告 (手動貼上)</div>
+                    <div className="flex items-center justify-between mb-2">
+                        <div className="flex items-center text-purple-800 font-bold text-sm">
+                            <ClipboardPaste size={16} className="mr-2" /> 第一步：Gemini 研究報告
+                        </div>
+                        <button onClick={() => copyToClipboard(activeTask.geminiReport)} className="text-xs text-gray-400 hover:text-purple-600 flex items-center bg-white px-2 py-1 rounded border border-gray-200 transition-colors">
+                            <Copy size={12} className="mr-1" /> 複製報告
+                        </button>
+                    </div>
                     {/* 使用 AutoSaveTextarea */}
                     <AutoSaveTextarea 
                         className="w-full border rounded p-3 text-base sm:text-sm focus:ring-2 focus:ring-purple-500 outline-none" 
@@ -785,7 +799,12 @@ export default function App() {
                     </div>
                     </div>
                     <div className="border-t pt-4">
-                    <p className="text-sm text-gray-500 mb-2 font-bold">第三步：最終摘要 (AI 自動填入或手動貼上)</p>
+                    <div className="flex items-center justify-between mb-2">
+                        <p className="text-sm text-gray-500 font-bold">第三步：最終摘要 (AI 自動填入或手動貼上)</p>
+                        <button onClick={() => copyToClipboard(activeTask.summary)} className="text-xs text-gray-400 hover:text-purple-600 flex items-center bg-gray-50 px-2 py-1 rounded border border-gray-200 transition-colors">
+                            <Copy size={12} className="mr-1" /> 複製摘要
+                        </button>
+                    </div>
                     {/* 使用 AutoSaveTextarea */}
                     <AutoSaveTextarea 
                         className="w-full border rounded p-3 text-base sm:text-sm focus:ring-2 focus:ring-purple-500 outline-none resize-none" 
@@ -848,7 +867,6 @@ export default function App() {
                     <div className="mb-6">
                     <div className="flex justify-between items-end mb-2">
                         <label className="text-sm font-bold text-gray-700 flex items-center"><LayoutTemplate size={16} className="mr-2"/> 草稿預覽 (自動排版)</label>
-                        <Button onClick={handleCopySubstackDraft} icon={Copy} variant="magic" className="text-xs py-1 px-3 h-8" disabled={!activeTask.summary}>一鍵複製完整草稿</Button>
                     </div>
                     
                     <div ref={substackPreviewRef} className="bg-white border border-gray-200 p-6 rounded-lg shadow-sm text-gray-800 leading-relaxed font-serif" style={{ minHeight: '300px' }}>

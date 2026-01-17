@@ -31,9 +31,14 @@
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
-    // 允許所有人讀寫（僅用於協作，生產環境請加強安全）
-    match /tasks/{taskId} {
-      allow read, write: if true;
+    // 允許匿名用戶讀寫 artifacts 集合下的公開資料
+    // 路徑格式：artifacts/{appId}/public/data/tasks/{taskId}
+    match /artifacts/{appId}/public/data/tasks/{taskId} {
+      // 允許已認證的用戶（包括匿名用戶）讀寫
+      allow read, write: if request.auth != null;
+      
+      // 或者更寬鬆的設定（允許所有匿名用戶，僅用於協作）
+      // allow read, write: if true;
     }
   }
 }
