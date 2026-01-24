@@ -64,17 +64,19 @@ try {
   isFirebaseConfigured = false;
 }
 
-// appId 優先順序：環境變數 > 全域變數 > 專案 ID > 預設值
-// 注意：如果使用專案 ID 作為 appId，Firestore 規則也需要匹配
-// 預設使用專案 ID，確保與 Chrome 擴充功能一致
+// appId 優先順序：環境變數 VITE_FIREBASE_APP_ID > 全域變數 __app_id > 專案 ID > 預設值
+// 注意：VITE_FIREBASE_APP_ID 是用於 Firestore 路徑的自定義 ID，不是 Firebase 應用程式 ID
+// 如果未設定，優先使用專案 ID，最後回退到預設值
 const appId = typeof __app_id !== 'undefined' 
   ? __app_id 
-  : (import.meta.env.VITE_FIREBASE_APP_ID || (isFirebaseConfigured && app?.options?.projectId) || 'farm-39a95');
+  : (import.meta.env.VITE_FIREBASE_APP_ID || (isFirebaseConfigured && app?.options?.projectId) || 'content-farm-os-default');
 
 // 在初始化後記錄實際使用的 appId
 if (isFirebaseConfigured) {
-  console.log('📌 使用的 appId:', appId);
+  console.log('📌 使用的 appId (Firestore 路徑):', appId);
   console.log('📌 Firebase 專案 ID:', app?.options?.projectId);
+  console.log('📌 Firebase 應用程式 ID:', app?.options?.appId);
+  console.log('⚠️ 注意：appId 用於 Firestore 路徑，不是 Firebase 應用程式 ID');
 }
 
 // --- 配置與 Prompt 資料庫 ---
