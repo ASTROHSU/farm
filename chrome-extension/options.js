@@ -12,6 +12,24 @@ document.addEventListener('DOMContentLoaded', function() {
   // 保存按鈕事件
   saveBtn.addEventListener('click', saveConfig);
 
+  /**
+   * 清理 JSON 字串（移除註解、尾隨逗號等）
+   */
+  function cleanJson(jsonString) {
+    let cleaned = jsonString;
+    
+    // 移除單行註解 (// ...)
+    cleaned = cleaned.replace(/\/\/.*$/gm, '');
+    
+    // 移除多行註解 (/* ... */)
+    cleaned = cleaned.replace(/\/\*[\s\S]*?\*\//g, '');
+    
+    // 移除尾隨逗號（在 } 或 ] 之前）
+    cleaned = cleaned.replace(/,(\s*[}\]])/g, '$1');
+    
+    return cleaned.trim();
+  }
+
   // 測試按鈕事件
   testBtn.addEventListener('click', testConnection);
 
@@ -42,9 +60,39 @@ document.addEventListener('DOMContentLoaded', function() {
 
       let firebaseConfig;
       try {
-        firebaseConfig = JSON.parse(firebaseConfigText);
+        // 清理 JSON：移除註解和尾隨逗號
+        const cleanedJson = cleanJson(firebaseConfigText);
+        firebaseConfig = JSON.parse(cleanedJson);
       } catch (e) {
-        throw new Error('Firebase 配置格式錯誤，請確認是有效的 JSON');
+        // 提供更詳細的錯誤訊息
+        const errorMsg = e.message || '未知錯誤';
+        const position = e.message.match(/position (\d+)/);
+        let detailedError = `Firebase 配置格式錯誤：${errorMsg}`;
+        
+        if (position) {
+          const pos = parseInt(position[1]);
+          const lines = firebaseConfigText.split('\n');
+          let charCount = 0;
+          let lineNum = 0;
+          let colNum = 0;
+          
+          for (let i = 0; i < lines.length; i++) {
+            if (charCount + lines[i].length + 1 >= pos) {
+              lineNum = i + 1;
+              colNum = pos - charCount;
+              break;
+            }
+            charCount += lines[i].length + 1; // +1 for newline
+          }
+          
+          detailedError += `\n\n錯誤位置：第 ${lineNum} 行，第 ${colNum} 列`;
+          if (lineNum > 0 && lineNum <= lines.length) {
+            detailedError += `\n\n問題行內容：\n${lines[lineNum - 1]}`;
+            detailedError += `\n${' '.repeat(Math.max(0, colNum - 1))}^`;
+          }
+        }
+        
+        throw new Error(detailedError);
       }
 
       // 驗證必要欄位
@@ -74,8 +122,17 @@ document.addEventListener('DOMContentLoaded', function() {
         console.log('配置已保存:', { firebaseConfig, appId });
       });
     } catch (error) {
-      showStatus('❌ ' + error.message, 'error');
+      // 顯示錯誤訊息（如果是多行，只顯示第一行，完整訊息在 console）
+      const errorMsg = error.message.split('\n')[0];
+      showStatus('❌ ' + errorMsg, 'error');
       console.error('保存配置失敗:', error);
+      console.error('完整錯誤訊息:', error.message);
+      
+      // 如果是 JSON 格式錯誤，在 console 中顯示詳細資訊
+      if (error.message.includes('JSON') || error.message.includes('格式錯誤')) {
+        console.error('提示：請確認 JSON 格式正確，不包含註解或尾隨逗號');
+        console.error('輸入的內容:', firebaseConfigInput.value);
+      }
     }
   }
 
@@ -95,9 +152,36 @@ document.addEventListener('DOMContentLoaded', function() {
 
       let firebaseConfig;
       try {
-        firebaseConfig = JSON.parse(firebaseConfigText);
+        // 清理 JSON：移除註解和尾隨逗號
+        const cleanedJson = cleanJson(firebaseConfigText);
+        firebaseConfig = JSON.parse(cleanedJson);
       } catch (e) {
-        throw new Error('Firebase 配置格式錯誤');
+        // 提供更詳細的錯誤訊息
+        const errorMsg = e.message || '未知錯誤';
+        let detailedError = `Firebase 配置格式錯誤：${errorMsg}`;
+        
+        // 嘗試找出錯誤位置
+        const position = e.message.match(/position (\d+)/);
+        if (position) {
+          const pos = parseInt(position[1]);
+          const lines = firebaseConfigText.split('\n');
+          let charCount = 0;
+          let lineNum = 0;
+          
+          for (let i = 0; i < lines.length; i++) {
+            if (charCount + lines[i].length + 1 >= pos) {
+              lineNum = i + 1;
+              break;
+            }
+            charCount += lines[i].length + 1;
+          }
+          
+          if (lineNum > 0) {
+            detailedError += ` (第 ${lineNum} 行附近)`;
+          }
+        }
+        
+        throw new Error(detailedError);
       }
 
       const appId = appIdInput.value.trim();

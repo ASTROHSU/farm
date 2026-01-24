@@ -64,7 +64,18 @@ try {
   isFirebaseConfigured = false;
 }
 
-const appId = typeof __app_id !== 'undefined' ? __app_id : 'content-farm-os-default';
+// appId 優先順序：環境變數 > 全域變數 > 專案 ID > 預設值
+// 注意：如果使用專案 ID 作為 appId，Firestore 規則也需要匹配
+// 預設使用專案 ID，確保與 Chrome 擴充功能一致
+const appId = typeof __app_id !== 'undefined' 
+  ? __app_id 
+  : (import.meta.env.VITE_FIREBASE_APP_ID || (isFirebaseConfigured && app?.options?.projectId) || 'farm-39a95');
+
+// 在初始化後記錄實際使用的 appId
+if (isFirebaseConfigured) {
+  console.log('📌 使用的 appId:', appId);
+  console.log('📌 Firebase 專案 ID:', app?.options?.projectId);
+}
 
 // --- 配置與 Prompt 資料庫 ---
 const PROMPTS = {
@@ -248,7 +259,8 @@ export default function App() {
   const [user, setUser] = useState(null);
   const [tasks, setTasks] = useState([]);
   const [isLoadingTasks, setIsLoadingTasks] = useState(true);
-  const [connectionStatus, setConnectionStatus] = useState('checking'); // 'cloud', 'local'
+  const [connectionStatus, setConnectionStatus] = useState('checking'); // 'cloud', 'local', 'warning'
+  const [writePermissionError, setWritePermissionError] = useState(false);
 
   const [apiKeys, setApiKeys] = useState(() => {
     try {
@@ -294,7 +306,23 @@ export default function App() {
           await signInAnonymously(auth);
         }
       } catch (e) {
-        console.error('Firebase Auth Error:', e);
+        console.error('❌ Firebase 認證失敗:', e);
+        console.error('錯誤代碼:', e.code);
+        console.error('錯誤訊息:', e.message);
+        
+        // 根據錯誤類型提供具體的錯誤訊息
+        let errorMessage = 'Firebase 認證失敗';
+        if (e.code === 'auth/operation-not-allowed') {
+          errorMessage = '❌ Firebase 認證失敗：匿名認證未啟用\n\n請前往 Firebase Console → Authentication → Sign-in method → 啟用「匿名」登入方式。';
+        } else if (e.code === 'auth/invalid-api-key') {
+          errorMessage = '❌ Firebase 認證失敗：API Key 無效\n\n請檢查環境變數 VITE_FIREBASE_API_KEY 是否正確設定。';
+        } else if (e.code === 'auth/network-request-failed') {
+          errorMessage = '❌ Firebase 認證失敗：網路連線問題\n\n請檢查網路連線是否正常。';
+        } else {
+          errorMessage = `❌ Firebase 認證失敗：${e.message || e.toString()}\n\n請檢查 Firebase 設定和網路連線。`;
+        }
+        
+        alert(errorMessage);
         setConnectionStatus('local'); // 登入失敗也降級為本地
       }
     };
@@ -303,7 +331,9 @@ export default function App() {
     const unsubscribeAuth = onAuthStateChanged(auth, (currentUser) => {
       setUser(currentUser);
       if (currentUser) {
-        setConnectionStatus('cloud');
+        // 登入成功，但先不設定為 cloud，等待實際讀寫操作結果
+        // 如果之後有權限錯誤，會由讀寫操作設定為 'warning'
+        // 如果讀寫成功，會由 onSnapshot 設定為 'cloud'
       } else {
         // 如果是登出狀態，可能暫時斷線
         // 這裡可以設為 'checking' 或保持原樣等待重連
@@ -355,9 +385,16 @@ export default function App() {
       setTasks(visibleTasks);
       setIsLoadingTasks(false);
       setConnectionStatus('cloud'); // 確保收到資料時狀態正確
+      setWritePermissionError(false); // 成功讀取，清除權限錯誤
     }, (error) => {
         console.error("Firestore Snapshot Error:", error);
-        setConnectionStatus('local'); // 發生錯誤時標記為本地模式（或斷線）
+        if (error.code === 'permission-denied') {
+          setWritePermissionError(true);
+          setConnectionStatus('warning');
+          console.warn('⚠️ 連線成功，但可能需要配置安全規則以允許寫入');
+        } else {
+          setConnectionStatus('local'); // 發生錯誤時標記為本地模式（或斷線）
+        }
         setIsLoadingTasks(false);
     });
 
@@ -455,7 +492,13 @@ export default function App() {
       setIsModalOpen(false);
     } catch (e) {
       console.error("Error adding task:", e);
-      alert("新增失敗");
+      if (e.code === 'permission-denied') {
+        setWritePermissionError(true);
+        setConnectionStatus('warning');
+        alert(`❌ 寫入權限被拒絕\n\n請檢查 Firebase Firestore 安全規則是否正確配置。\n\n錯誤詳情：${e.message}\n\n請參考 FIREBASE_SETUP.md 中的安全規則設定。`);
+      } else {
+        alert(`新增失敗：${e.message || e.toString()}`);
+      }
     } finally {
       setIsSaving(false);
     }
@@ -473,6 +516,11 @@ export default function App() {
       }
     } catch (e) {
       console.error("Error updating task:", e);
+      if (e.code === 'permission-denied') {
+        setWritePermissionError(true);
+        setConnectionStatus('warning');
+        console.warn('⚠️ 寫入權限被拒絕，請檢查 Firestore 安全規則');
+      }
     } finally {
       setTimeout(() => setIsSaving(false), 500);
     }
@@ -514,28 +562,53 @@ export default function App() {
   };
 
   const confirmAction = async () => {
-    if (confirmDialog.type === 'delete') {
-      if (isFirebaseConfigured && user) {
-        await deleteDoc(doc(db, 'artifacts', appId, 'public', 'data', 'tasks', confirmDialog.id));
-      } else {
-         setTasks(prev => prev.filter(t => t.id !== confirmDialog.id));
+    try {
+      if (confirmDialog.type === 'delete') {
+        if (isFirebaseConfigured && user) {
+          try {
+            await deleteDoc(doc(db, 'artifacts', appId, 'public', 'data', 'tasks', confirmDialog.id));
+          } catch (e) {
+            if (e.code === 'permission-denied') {
+              setWritePermissionError(true);
+              setConnectionStatus('warning');
+              alert(`❌ 刪除失敗：權限被拒絕\n\n請檢查 Firebase Firestore 安全規則。`);
+              return;
+            }
+            throw e;
+          }
+        } else {
+           setTasks(prev => prev.filter(t => t.id !== confirmDialog.id));
+        }
+        if (activeTaskId === confirmDialog.id) setActiveTaskId(null);
+      } else if (confirmDialog.type === 'archive') {
+        const activeTasks = tasks.filter(t => t.status !== 'archived');
+        const now = new Date().toISOString();
+        if (isFirebaseConfigured && user) {
+          // 批次處理在前端迴圈執行
+          try {
+            await Promise.all(activeTasks.map(task => {
+              const taskRef = doc(db, 'artifacts', appId, 'public', 'data', 'tasks', task.id);
+              return updateDoc(taskRef, { status: 'archived', completed_at: now });
+            }));
+          } catch (e) {
+            if (e.code === 'permission-denied') {
+              setWritePermissionError(true);
+              setConnectionStatus('warning');
+              alert(`❌ 歸檔失敗：權限被拒絕\n\n請檢查 Firebase Firestore 安全規則。`);
+              return;
+            }
+            throw e;
+          }
+        } else {
+          setTasks([]); // 本地模式直接清空
+        }
+        setActiveTaskId(null);
       }
-      if (activeTaskId === confirmDialog.id) setActiveTaskId(null);
-    } else if (confirmDialog.type === 'archive') {
-      const activeTasks = tasks.filter(t => t.status !== 'archived');
-      const now = new Date().toISOString();
-      if (isFirebaseConfigured && user) {
-        // 批次處理在前端迴圈執行
-        activeTasks.forEach(task => {
-           const taskRef = doc(db, 'artifacts', appId, 'public', 'data', 'tasks', task.id);
-           updateDoc(taskRef, { status: 'archived', completed_at: now });
-        });
-      } else {
-        setTasks([]); // 本地模式直接清空
-      }
-      setActiveTaskId(null);
+      setConfirmDialog({ isOpen: false, type: '', id: null });
+    } catch (e) {
+      console.error("Error in confirmAction:", e);
+      alert(`操作失敗：${e.message || e.toString()}`);
     }
-    setConfirmDialog({ isOpen: false, type: '', id: null });
   };
 
   const handleCopySubstackDraft = () => {
@@ -988,6 +1061,14 @@ export default function App() {
             {connectionStatus === 'cloud' && (
               <span className="flex items-center px-2 py-1 bg-green-100 text-green-800 text-xs rounded-full font-bold mr-2">
                 <Check size={12} className="mr-1" /> 雲端同步中
+              </span>
+            )}
+            {connectionStatus === 'warning' && (
+              <span 
+                className="flex items-center px-2 py-1 bg-yellow-100 text-yellow-800 text-xs rounded-full font-bold mr-2 cursor-help" 
+                title="連線成功，但寫入權限可能未正確配置。請檢查 Firebase Firestore 安全規則。"
+              >
+                <AlertTriangle size={12} className="mr-1" /> 連線成功，但可能需要配置安全規則以允許寫入
               </span>
             )}
 

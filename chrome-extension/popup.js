@@ -38,10 +38,49 @@ document.addEventListener('DOMContentLoaded', function() {
         throw new Error('無法獲取當前標籤頁');
       }
 
+      // 檢查是否為特殊頁面（無法注入 content script）
+      if (tab.url.startsWith('chrome://') || 
+          tab.url.startsWith('chrome-extension://') || 
+          tab.url.startsWith('moz-extension://') ||
+          tab.url.startsWith('edge://')) {
+        throw new Error('無法在此類頁面上擷取內容（chrome://、擴充功能頁面等）');
+      }
+
+      // 嘗試注入 content script（如果尚未注入）
+      try {
+        await chrome.scripting.executeScript({
+          target: { tabId: tab.id },
+          files: ['content.js']
+        });
+      } catch (injectError) {
+        // 如果注入失敗，可能是已經注入或頁面不允許注入
+        console.log('Content script 可能已存在或無法注入:', injectError);
+      }
+
       // 向 content script 發送訊息以擷取內容
-      const response = await chrome.tabs.sendMessage(tab.id, {
-        action: 'extractContent'
-      });
+      let response;
+      try {
+        response = await chrome.tabs.sendMessage(tab.id, {
+          action: 'extractContent'
+        });
+      } catch (messageError) {
+        // 如果發送訊息失敗，嘗試重新注入
+        if (messageError.message.includes('Receiving end does not exist')) {
+          // 重新注入 content script
+          await chrome.scripting.executeScript({
+            target: { tabId: tab.id },
+            files: ['content.js']
+          });
+          // 等待一小段時間讓 script 載入
+          await new Promise(resolve => setTimeout(resolve, 100));
+          // 再次嘗試發送訊息
+          response = await chrome.tabs.sendMessage(tab.id, {
+            action: 'extractContent'
+          });
+        } else {
+          throw messageError;
+        }
+      }
 
       if (response && response.success) {
         // 發送到 background script 以儲存到 Firebase

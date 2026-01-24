@@ -33,12 +33,17 @@ service cloud.firestore {
   match /databases/{database}/documents {
     // 允許匿名用戶讀寫 artifacts 集合下的公開資料
     // 路徑格式：artifacts/{appId}/public/data/tasks/{taskId}
+    
+    // 允許讀寫 tasks 集合中的文檔
     match /artifacts/{appId}/public/data/tasks/{taskId} {
       // 允許已認證的用戶（包括匿名用戶）讀寫
       allow read, write: if request.auth != null;
-      
-      // 或者更寬鬆的設定（允許所有匿名用戶，僅用於協作）
-      // allow read, write: if true;
+    }
+    
+    // 如果需要允許查詢整個集合，也需要允許讀取父文檔路徑
+    // 這確保了 onSnapshot 查詢可以正常工作
+    match /artifacts/{appId}/public/data {
+      allow read: if request.auth != null;
     }
   }
 }
